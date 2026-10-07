@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>管理用画面</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="card">
+  <div class="header">
+    <h1>管理用画面</h1>
+    <button type="button" class="btn-small" onclick="logoutAndGoHome()">ログアウト</button>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" data-tab="topics" class="active">お題の登録・編集</button>
+    <button type="button" role="tab" data-tab="tables">座席配置図</button>
+    <button type="button" role="tab" data-tab="admins">管理者アカウント追加</button>
+  </div>
+
+  <!-- お題の登録・編集 -->
+  <section class="tab-panel" id="tab-topics">
+    <label>登録済みのお題</label>
+    <div id="topic-list"></div>
+    <label for="topic-text">お題の入力欄（編集時は選んだお題が入る）</label>
+    <input type="text" id="topic-text" maxlength="100" placeholder="お題">
+    <div class="btn-row" style="margin-top:12px">
+      <button type="button" id="topic-add">登録</button>
+      <button type="button" id="topic-update" disabled>更新</button>
+    </div>
+    <p id="topic-msg" class="msg error"></p>
+  </section>
+
+  <!-- 座席配置図 -->
+  <section class="tab-panel" id="tab-tables" hidden>
+    <label>テーブルを追加・削除（1テーブル8席）</label>
+    <div id="table-list"></div>
+    <button type="button" id="table-add" class="btn-block">テーブル追加</button>
+    <p id="table-msg" class="msg error"></p>
+
+    <div class="danger-zone">
+      <label>テスト用</label>
+      <button type="button" id="daily-reset" class="btn-block">0時の処理を今すぐ実行</button>
+      <p class="note">全員を強制帰社にして、今日のお題を選び直します。座席画面を開いている人は、30秒以内にホームへ戻されます。</p>
+    </div>
+  </section>
+
+  <!-- 管理者アカウント追加 -->
+  <section class="tab-panel" id="tab-admins" hidden>
+    <form id="admin-form">
+      <label for="admin-id">アカウントID</label>
+      <input type="text" id="admin-id" name="id" placeholder="ID" autocomplete="off">
+      <label for="admin-pw">パスワード</label>
+      <input type="password" id="admin-pw" name="password" placeholder="パスワード" autocomplete="new-password">
+      <button type="submit" class="btn-block">作成</button>
+      <p id="admin-msg" class="msg"></p>
+    </form>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+<script>
+  const topicMsg = document.getElementById('topic-msg');
+  const tableMsg = document.getElementById('table-msg');
+  const adminMsg = document.getElementById('admin-msg');
+  const topicText = document.getElementById('topic-text');
+  const updateBtn = document.getElementById('topic-update');
+  let editingId = null;
+
+  // タブ切り替え（ページを読み込み直さない）
+  document.querySelectorAll('.tabs button').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tabs button').forEach((t) => t.classList.toggle('active', t === tab));
+      document.querySelectorAll('.tab-panel').forEach((p) => { p.hidden = p.id !== 'tab-' + tab.dataset.tab; });
+    });
+  });
+
+  function render(data) {
+    // お題
+    const list = document.getElementById('topic-list');
+    list.replaceChildren();
+    if (data.topics.length === 0) list.append(el('p', 'note', 'お題がありません'));
+    for (const t of data.topics) {
+      const item = el('div', 'topic-item' + (t.id === editingId ? ' editing' : ''));
+      const text = el('span', null, t.text);
+      if (t.text === data.todayTopic) text.append(el('span', 'today', '今日のお題'));
+      const edit = el('button', 'btn-small', '編集');
+      edit.type = 'button';
+      edit.addEventListener('click', () => {
+        editingId = t.id;
+        topicText.value = t.text;
+        updateBtn.disabled = false;
+        topicText.focus();
+        render(data);
+      });
+      item.append(text, edit);
+      list.append(item);
+    }
+
+    // テーブル
+    const tables = document.getElementById('table-list');
+    tables.replaceChildren();
+    for (const table of data.tables) {
+      const card = el('div', 'seatmap table-card static');
+      const head = el('div', 'table-head');
+      const del = el('button', 'btn-small', '削除');
+      del.type = 'button';
+      del.addEventListener('click', () => call(`/admin/seat-tables/${table.id}`, 'DELETE', null, tableMsg));
+      head.append(el('span', null, table.label), del);
+      const mapEl = el('div');
+      renderSeatMap(mapEl, { tables: [table] }, { landmarks: false });
+      card.append(head, mapEl);
+      tables.append(card);
+    }
+  }
+
+  async function call(url, method, data, msgEl) {
+    showMsg(msgEl, '');
+    try {
+      const r = await api(url, { method, data });
+      render(r);
+      return true;
+    } catch (err) { fail(msgEl)(err); return false; }
+  }
+
+  document.getElementById('topic-add').addEventListener('click', async () => {
+    editingId = null;
+    updateBtn.disabled = true;
+    if (await call('/admin/topics', 'POST', { text: topicText.value }, topicMsg)) topicText.value = '';
+  });
+
+  updateBtn.addEventListener('click', async () => {
+    if (editingId == null) return;
+    const id = editingId;
+    editingId = null;
+    updateBtn.disabled = true;
+    if (await call(`/admin/topics/${id}`, 'PUT', { text: topicText.value }, topicMsg)) topicText.value = '';
+    else { editingId = id; updateBtn.disabled = false; }
+  });
+
+  document.getElementById('table-add').addEventListener('click', () => call('/admin/seat-tables', 'POST', null, tableMsg));
+
+  document.getElementById('daily-reset').addEventListener('click', async () => {
+    if (!confirm('全員を強制帰社にします。よろしいですか？')) return;
+    if (await call('/admin/daily-reset', 'POST', null, tableMsg)) showMsg(tableMsg, '0時の処理を実行しました', 'success');
+  });
+
+  document.getElementById('admin-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    showMsg(adminMsg, '');
+    try {
+      const r = await api('/admin/admins', { method: 'POST', data: new FormData(e.target) });
+      showMsg(adminMsg, r.message, 'success');
+      e.target.reset();
+    } catch (err) { fail(adminMsg)(err); }
+  });
+
+  // 3つのタブの内容は、画面を開いた時にまとめて読み込む
+  api('/admin/data').then(render).catch(fail(topicMsg));
+</script>
+</body>
+</html>

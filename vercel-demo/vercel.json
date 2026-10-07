@@ -1,0 +1,7 @@
+{
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/static/:file", "destination": "/:file" },
+    { "source": "/", "destination": "/index.html" }
+  ]
+}

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>アカウント情報</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="card">
+  <h1>アカウント情報</h1>
+  <form id="form">
+    <label for="name">名前（必須・100文字まで・席決め画面と共通）</label>
+    <input type="text" id="name" name="name" maxlength="100" placeholder="名前">
+    <label>今日のお題</label>
+    <div class="readonly-box" id="topic"></div>
+    <label for="comment">ひとこと（必須・100文字まで・席決め画面と共通）</label>
+    <input type="text" id="comment" name="comment" maxlength="100" placeholder="ひとこと">
+    <label for="workingOn">今頑張っていること（保存され続ける）</label>
+    <input type="text" id="workingOn" name="workingOn" maxlength="100" placeholder="今頑張っていること">
+    <p id="msg" class="msg error"></p>
+    <button type="submit" class="btn-block">決定</button>
+  </form>
+</main>
+<script src="/static/app.js"></script>
+<script>
+  const msg = document.getElementById('msg');
+
+  api('/me').then((me) => {
+    document.getElementById('name').value = me.name;
+    document.getElementById('comment').value = me.comment;
+    document.getElementById('workingOn').value = me.workingOn;
+    document.getElementById('topic').textContent = me.topic ?? 'お題なし';
+  }).catch(fail(msg));
+
+  document.getElementById('form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    showMsg(msg, '');
+    try {
+      const r = await api('/account', { method: 'POST', data: new FormData(e.target) });
+      location.href = r.redirect;
+    } catch (err) { fail(msg)(err); }
+  });
+</script>
+</body>
+</html>

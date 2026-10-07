@@ -1,0 +1,212 @@
+/* 明るい色合いで統一する（OSのダークモード設定でも明るいまま） */
+:root {
+  color-scheme: light;
+  --bg: #fdf7ef;
+  --card: #ffffff;
+  --surface: #ffffff;
+  --text: #3a3330;
+  --muted: #8a7f78;
+  --line: #eaded2;
+  --primary: #e8673f;
+  --primary-text: #ffffff;
+  --taken: #ffe2c7;
+  --taken-text: #9a4a1c;
+  --mine: #4f9bf0;
+  --mine-text: #ffffff;
+  --disabled: #efeae5;
+  --accent-bg: #e8f3ff;
+  --accent: #2f80d8;
+  --error: #d93a2b;
+  --success: #3d9a3a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.card {
+  max-width: 440px;
+  margin: 24px auto;
+  padding: 20px 16px;
+  background: var(--card);
+  border-radius: 14px;
+  box-shadow: 0 4px 18px rgba(200, 120, 70, 0.10);
+}
+@media (max-width: 480px) {
+  .card { margin: 0; border-radius: 0; min-height: 100vh; }
+}
+
+.header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+h1 { font-size: 17px; margin: 0; text-align: center; }
+.header h1 { text-align: left; }
+
+label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+
+input[type="text"], input[type="password"] {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 15px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.readonly-box {
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { filter: brightness(0.97); }
+button:disabled { cursor: not-allowed; color: var(--muted); background: var(--disabled); }
+.btn-block { display: block; width: 100%; margin-top: 12px; font-weight: 600; }
+.btn-primary { background: var(--primary); color: var(--primary-text); border-color: var(--primary); padding: 14px; font-size: 17px; }
+.btn-small { padding: 4px 10px; font-size: 13px; border-radius: 999px; }
+.btn-row { display: flex; gap: 8px; }
+.btn-row button { flex: 1; }
+
+.msg { min-height: 1.5em; margin: 8px 0 0; font-size: 13px; }
+.msg.error { color: var(--error); }
+.msg.success { color: var(--success); }
+.note { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+.right { display: flex; justify-content: flex-end; margin-top: 16px; }
+.test-hint {
+  margin-top: 20px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+}
+
+/* ---- 席の図 ---- */
+.seatmap {
+  position: relative;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.landmark {
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  padding: 2px;
+}
+.table-block { margin: 14px 0; }
+.seat-row { display: flex; justify-content: center; gap: 10px; }
+.table-bar {
+  margin: 8px auto;
+  width: 70%;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  background: #fff1e2;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px;
+}
+.seat {
+  width: 42px;
+  height: 36px;
+  padding: 0;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.seat.free { border: 1px dashed var(--line); background: transparent; cursor: default; }
+.seat.taken { border: 1px solid var(--taken); background: var(--taken); color: var(--taken-text); font-weight: 700; }
+.seat.mine { border: 1px solid var(--mine); background: var(--mine); color: var(--mine-text); font-weight: 700; }
+.seat.selected { outline: 3px solid var(--accent); outline-offset: 2px; }
+.seatmap.static .seat { cursor: default; }
+
+.popup {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(280px, 90%);
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  z-index: 10;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.popup .name { font-weight: 700; font-size: 16px; margin: 2px 0 6px; }
+.popup .close { position: absolute; top: 6px; right: 6px; border: none; background: none; font-size: 16px; padding: 2px 6px; }
+.popup dt { font-size: 12px; color: var(--muted); }
+.popup dd { margin: 0 0 6px; }
+
+.midnight-note {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  margin: 8px 0 0;
+}
+
+/* ---- 管理用画面 ---- */
+.tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.tabs button { flex: 1; font-size: 13px; padding: 8px 4px; }
+.tabs button.active { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); font-weight: 700; }
+.tab-panel[hidden] { display: none; }
+.topic-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.topic-item.editing { border-color: var(--accent); }
+.topic-item .today { font-size: 11px; color: var(--accent); margin-left: 6px; white-space: nowrap; }
+.table-card { margin-bottom: 10px; }
+.table-card .table-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-size: 13px; }
+.table-card .table-block { margin: 4px 0; }
+.danger-zone { margin-top: 24px; padding-top: 12px; border-top: 1px dashed var(--line); }
+
+/* ---- ログイン画面の紅葉 ---- */
+body.login {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #fff8ec 0%, #ffe9d6 100%);
+}
+.autumn-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.autumn-bg svg { width: 100%; height: 100%; display: block; }
+body.login .card {
+  position: relative;
+  z-index: 1;
+  background: rgba(255, 255, 255, 0.92);
+}
+@media (max-width: 480px) {
+  body.login .card { margin: 72px 16px; min-height: auto; border-radius: 14px; }
+}

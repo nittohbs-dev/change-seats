@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>アカウント作成</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="card">
+  <h1>アカウント作成</h1>
+  <form id="form">
+    <label for="id">アカウントID</label>
+    <input type="text" id="id" name="id" placeholder="ID" autocomplete="username">
+    <label for="password">パスワード</label>
+    <input type="password" id="password" name="password" placeholder="パスワード" autocomplete="new-password">
+    <p id="msg" class="msg error"></p>
+    <button type="submit" class="btn-block">作成</button>
+  </form>
+  <div class="test-hint">デモ版: 作成は見た目だけです。ログイン画面ではどのIDでも入れます。</div>
+</main>
+<script src="/static/app.js"></script>
+<script>
+  const msg = document.getElementById('msg');
+  document.getElementById('form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    showMsg(msg, '');
+    try {
+      const r = await api('/register', { method: 'POST', data: new FormData(e.target) });
+      location.href = r.redirect;
+    } catch (err) { fail(msg)(err); }
+  });
+</script>
+</body>
+</html>

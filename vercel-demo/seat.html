@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>座席</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main class="card">
+  <div class="header">
+    <h1>座席</h1>
+    <a href="/account"><button type="button" class="btn-small">アカウント情報</button></a>
+  </div>
+  <div id="map" class="seatmap"></div>
+  <p id="msg" class="msg error"></p>
+  <button type="button" id="leave" class="btn-block">帰社（ログアウト）</button>
+  <p class="midnight-note">毎日 0:00 になると、全員が自動で帰社します</p>
+</main>
+<script src="/static/app.js"></script>
+<script>
+  const msg = document.getElementById('msg');
+  const map = document.getElementById('map');
+  let selectedId = null;
+  let popup = null;
+
+  // 戻る操作をしても、この画面に留まる
+  history.pushState(null, '', location.href);
+  addEventListener('popstate', () => history.pushState(null, '', location.href));
+
+  function closePopup() {
+    popup?.remove();
+    popup = null;
+    selectedId = null;
+    map.querySelectorAll('.seat.selected').forEach((s) => s.classList.remove('selected'));
+  }
+
+  async function openPopup(seat, seatEl) {
+    closePopup();
+    selectedId = seat.id;
+    seatEl.classList.add('selected');
+    try {
+      const p = await api(`/seats/${seat.id}/person`);
+      if (selectedId !== seat.id) return;
+      popup = el('div', 'popup');
+      const close = el('button', 'close', '×');
+      close.type = 'button';
+      close.setAttribute('aria-label', '閉じる');
+      close.addEventListener('click', closePopup);
+      const dl = el('dl');
+      dl.append(el('dt', null, 'ひとこと'), el('dd', null, p.comment || '—'),
+                el('dt', null, '今頑張っていること'), el('dd', null, p.workingOn || '—'));
+      popup.append(close, el('div', 'name', p.name || '（名前なし）'), dl);
+      popup.style.top = (seatEl.offsetTop + seatEl.offsetHeight + 10) + 'px';
+      map.append(popup);
+    } catch (err) {
+      closePopup();
+      fail(msg)(err);
+      refresh();
+    }
+  }
+
+  async function refresh() {
+    try {
+      const me = await api('/me');
+      if (!me.seated) {
+        alert('0時になったため、自動で帰社しました。');
+        return logoutAndGoHome();
+      }
+      const data = await api('/seat-map');
+      const keep = popup && data.tables.some((t) => t.seats.some((s) => s.id === selectedId && s.state !== 'free'));
+      if (!keep) closePopup();
+      const openPopupEl = popup;
+      renderSeatMap(map, data, { onSeatClick: openPopup, selectedId });
+      if (openPopupEl) map.append(openPopupEl);
+      showMsg(msg, '');
+    } catch (err) { fail(msg)(err); }
+  }
+
+  document.addEventListener('click', (e) => {
+    if (popup && !e.target.closest('.popup') && !e.target.closest('.seat')) closePopup();
+  });
+
+  document.getElementById('leave').addEventListener('click', async () => {
+    try {
+      const r = await api('/seat/leave', { method: 'POST' });
+      location.href = r.redirect;
+    } catch (err) { fail(msg)(err); }
+  });
+
+  refresh();
+  setInterval(refresh, POLL_MS);
+</script>
+</body>
+</html>
