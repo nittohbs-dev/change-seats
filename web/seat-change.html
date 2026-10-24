@@ -5,18 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>席決め</title>
   <link rel="stylesheet" href="/static/style.css">
-</head>
+  </head>
 <body>
-<main class="card">
+<main class="card mid">
   <h1>席決め</h1>
   <div class="readonly-box" style="margin-top:12px">今日のお題：<span id="topic"></span></div>
   <form id="form">
     <label for="name">名前（必須・100文字まで）</label>
     <input type="text" id="name" name="name" maxlength="100" placeholder="名前">
-    <label>席の図（読み込み時と30秒ごとに更新）</label>
-    <div id="map" class="seatmap static"></div>
-    <label for="comment">ひとこと（必須・100文字まで）</label>
-    <input type="text" id="comment" name="comment" maxlength="100" placeholder="ひとこと">
+    <label>座席配置図（真上から見た図。読み込み時と30秒ごとに更新）</label>
+    <div id="map"></div>
+    <p class="note">点線の円が空席です。席決めのボタンを押すと、空席からランダムに決まります。</p>
     <button type="submit" id="submit" class="btn-block">席決め</button>
     <p id="msg" class="msg error"></p>
     <p id="seated-note" class="note" hidden>すでに着席しているため、席決めはできません</p>
@@ -27,6 +26,7 @@
   const msg = document.getElementById('msg');
   const map = document.getElementById('map');
   const submit = document.getElementById('submit');
+  const viewReady = createSeatMap2d(map);
 
   async function refresh(first) {
     try {
@@ -34,11 +34,10 @@
       document.getElementById('topic').textContent = me.topic ?? 'お題なし';
       if (first) {
         document.getElementById('name').value = me.name;
-        document.getElementById('comment').value = me.comment;
       }
       submit.disabled = me.seated;
       document.getElementById('seated-note').hidden = !me.seated;
-      renderSeatMap(map, seatMap);
+      (await viewReady).update(seatMap);
     } catch (err) { fail(msg)(err); }
   }
 
@@ -55,7 +54,7 @@
   });
 
   refresh(true);
-  setInterval(() => refresh(false), POLL_MS);
+  watchSeatMap(() => refresh(false));
 </script>
 </body>
 </html>

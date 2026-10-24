@@ -2,13 +2,62 @@
 const E06 = '通信に失敗しました。もう一度お試しください';
 const POLL_MS = 30000;
 
+// サーバー（Java版）があればそこへ、なければ（Vercelなど）ブラウザ内のデモ版バックエンドで動く。
+// 判定は /api/ping で行い、結果が出るまで api() は待つ。
+const backendReady = (async () => {
+  try {
+    const r = await fetch('/api/ping');
+    if ((await r.json()).ok) return 'server';
+  } catch { /* サーバーなし */ }
+  await new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = '/static/demo-backend.js';
+    s.onload = resolve;
+    s.onerror = reject;
+    document.head.append(s);
+  });
+  await window.demoBackend.init();
+  // 権限のない画面なら移動する。移動が終わるまで、この画面の処理は止めておく。
+  if (window.demoBackend.guard()) await new Promise(() => {});
+  window.demoBackend.decorate();
+  return 'demo';
+})();
+
 /** APIを呼ぶ。失敗時は {error, message} を持つ例外を投げる。 */
-async function api(url, { method = 'GET', data } = {}) {
+async function api(url, opts = {}) {
+  return (await backendReady) === 'demo' ? demoApi(url, opts) : serverApi(url, opts);
+}
+
+async function demoApi(url, { method = 'GET', data } = {}) {
+  const f = {};
+  if (data) {
+    const entries = data instanceof FormData ? [...data.entries()] : Object.entries(data);
+    for (const [k, v] of entries) f[k] = String(v).trim();
+  }
+  try {
+    return window.demoBackend.handle(url, method, f);
+  } catch (e) {
+    if (e && e.error) throw e;
+    console.error(e);
+    throw { error: 'E-06', message: E06 };
+  }
+}
+
+/** CSRF 対策のトークン。サーバーが Cookie（XSRF-TOKEN）に入れたものを、書き込みの呼び出しでヘッダーに付けて返す */
+function csrfToken() {
+  const m = document.cookie.match(/(?:^|; )XSRF-TOKEN=([^;]*)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
+async function serverApi(url, { method = 'GET', data } = {}) {
   let res;
   try {
+    const headers = {};
+    if (data) headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    if (method !== 'GET') headers['X-XSRF-TOKEN'] = csrfToken();
     res = await fetch('/api' + url, {
       method,
-      headers: data ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {},
+      headers,
       body: data ? new URLSearchParams(data) : undefined,
     });
   } catch {
@@ -23,6 +72,25 @@ async function api(url, { method = 'GET', data } = {}) {
   return body;
 }
 
+/**
+ * 全員の画面の同期：サーバーが「席の状況などが変わった」と知らせてきたら（SSE）、すぐ refresh を呼ぶ。
+ * 通知が届かない場合に備えて、30秒ごとにも呼ぶ。サーバーのないデモ版では、同じブラウザの別タブの変更に反応する。
+ */
+function watchSeatMap(refresh) {
+  let timer = null;
+  const soon = () => { clearTimeout(timer); timer = setTimeout(refresh, 150); };   // 続けて届いた通知はまとめる
+  setInterval(refresh, POLL_MS);
+  backendReady.then((mode) => {
+    if (mode === 'server') {
+      const es = new EventSource('/api/events');   // 切れたらブラウザが自動で再接続し、再接続のたびに最新を取り直す
+      es.addEventListener('changed', soon);
+      es.onerror = () => { if (es.readyState === EventSource.CLOSED) es.close(); };   // ログインが切れていたら、あきらめる
+    } else {
+      window.addEventListener('storage', (e) => { if (e.key === 'seat-demo-v4') soon(); });
+    }
+  });
+}
+
 function showMsg(el, text, kind = 'error') {
   el.textContent = text || '';
   el.className = 'msg ' + kind;
@@ -33,43 +101,36 @@ function fail(el) {
 }
 
 /**
- * 席の図を描く。
- * opts.onSeatClick(seat, el) … 席を押した時（着席者のいる席のみ）
- * opts.selectedId … 枠を付ける席
- * opts.landmarks … 窓・入口を出すか
+ * 3Dの座席配置図を container に作る（office-view.js を読み込む）。
+ * 戻り値の update(seatMap) に /api/seat-map の結果を渡すと、着席者の模型と名前が更新される。
+ * 名前を押すとプロフィール（/api/seats/{id}/person）を表示する。
  */
-function renderSeatMap(container, data, opts = {}) {
-  const { onSeatClick, selectedId, landmarks = true } = opts;
-  container.replaceChildren();
-  if (landmarks) container.append(el('div', 'landmark', '窓'));
-  for (const table of data.tables) container.append(tableBlock(table, onSeatClick, selectedId));
-  if (landmarks) container.append(el('div', 'landmark', '入口'));
-}
-
-function tableBlock(table, onSeatClick, selectedId) {
-  const block = el('div', 'table-block');
-  for (const row of [1, 2]) {
-    const rowEl = el('div', 'seat-row');
-    table.seats
-      .filter((s) => s.row === row)
-      .sort((a, b) => a.col - b.col)
-      .forEach((s) => rowEl.append(seatButton(s, onSeatClick, selectedId)));
-    block.append(rowEl);
-    if (row === 1) block.append(el('div', 'table-bar', table.label));
+async function createSeatMap(container) {
+  container.replaceChildren(el('div', 'office-loading', '座席配置図を読み込み中…'));
+  try {
+    const { createOfficeView } = await import('/static/office-view.js');
+    return await createOfficeView(container, { fetchPerson: (id) => api(`/seats/${id}/person`) });
+  } catch (e) {
+    console.error(e);
+    container.replaceChildren(el('div', 'office-loading', '座席配置図を表示できませんでした（3D表示に対応したブラウザで開いてください）'));
+    return { update() {} };
   }
-  return block;
 }
 
-function seatButton(seat, onSeatClick, selectedId) {
-  const label = { free: '', taken: seat.initial, mine: '自分' }[seat.state];
-  const b = el('button', 'seat ' + seat.state, label);
-  b.type = 'button';
-  b.dataset.seatId = seat.id;
-  b.setAttribute('aria-label', { free: '空席', taken: '着席中の席', mine: '自分の席' }[seat.state]);
-  if (seat.id === selectedId) b.classList.add('selected');
-  if (onSeatClick && seat.state !== 'free') b.addEventListener('click', () => onSeatClick(seat, b));
-  else b.tabIndex = -1;
-  return b;
+/**
+ * 真上から見た2Dの座席配置図を container に作る（office-map2d.js を読み込む）。
+ * 戻り値の update(seatMap) に /api/seat-map の結果を渡すと、席の状態が描き直される。
+ */
+async function createSeatMap2d(container) {
+  container.replaceChildren(el('div', 'office-loading', '座席配置図を読み込み中…'));
+  try {
+    const { createOfficeMap2d } = await import('/static/office-map2d.js');
+    return await createOfficeMap2d(container);
+  } catch (e) {
+    console.error(e);
+    container.replaceChildren(el('div', 'office-loading', '座席配置図を表示できませんでした'));
+    return { update() {} };
+  }
 }
 
 /** textContentで入れるので、利用者の入力がHTMLとして解釈されることはない */

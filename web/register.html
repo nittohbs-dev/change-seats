@@ -10,14 +10,17 @@
 <main class="card">
   <h1>アカウント作成</h1>
   <form id="form">
-    <label for="id">アカウントID</label>
-    <input type="text" id="id" name="id" placeholder="ID" autocomplete="username">
-    <label for="password">パスワード</label>
+    <label for="id">アカウントID（半角英数字 4〜20文字）</label>
+    <input type="text" id="id" name="id" placeholder="ID" autocomplete="username" maxlength="20">
+    <label for="password">パスワード（8文字以上）</label>
     <input type="password" id="password" name="password" placeholder="パスワード" autocomplete="new-password">
+    <label for="password2">パスワード（確認のため、もう一度）</label>
+    <input type="password" id="password2" placeholder="パスワード" autocomplete="new-password">
     <p id="msg" class="msg error"></p>
     <button type="submit" class="btn-block">作成</button>
   </form>
-  <div class="test-hint">テスト版: 作成は見た目だけです。ログイン画面ではどのIDでも入れます。</div>
+  <p class="note"><a href="/">ログイン画面に戻る</a></p>
+  <div class="test-hint">作ったアカウントは保存され、次回からもそのIDとパスワードでログインできます。</div>
 </main>
 <script src="/static/app.js"></script>
 <script>
@@ -25,9 +28,12 @@
   document.getElementById('form').addEventListener('submit', async (e) => {
     e.preventDefault();
     showMsg(msg, '');
+    if (e.target.password.value !== document.getElementById('password2').value) {
+      return showMsg(msg, 'パスワードが、確認用と一致しません');
+    }
     try {
       const r = await api('/register', { method: 'POST', data: new FormData(e.target) });
-      location.href = r.redirect;
+      location.href = r.redirect + '?registered=1';
     } catch (err) { fail(msg)(err); }
   });
 </script>

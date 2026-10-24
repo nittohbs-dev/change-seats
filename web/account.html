@@ -14,10 +14,11 @@
     <input type="text" id="name" name="name" maxlength="100" placeholder="名前">
     <label>今日のお題</label>
     <div class="readonly-box" id="topic"></div>
-    <label for="comment">ひとこと（必須・100文字まで・席決め画面と共通）</label>
-    <input type="text" id="comment" name="comment" maxlength="100" placeholder="ひとこと">
-    <label for="workingOn">今頑張っていること（保存され続ける）</label>
-    <input type="text" id="workingOn" name="workingOn" maxlength="100" placeholder="今頑張っていること">
+    <label for="issue">現状の個人の課題（任意・200文字まで）</label>
+    <textarea id="issue" name="issue" maxlength="200" rows="3" placeholder="例：会議での発言が少ない"></textarea>
+    <label for="effort">課題解決にむけて取り組んでいること（任意・200文字まで）</label>
+    <textarea id="effort" name="effort" maxlength="200" rows="3" placeholder="例：毎回の会議で1回は意見を言う"></textarea>
+    <p class="note">入力した内容は、変更するまで保存されます。座席配置図で名前を押すと、ほかの人も見られます。</p>
     <p id="msg" class="msg error"></p>
     <button type="submit" class="btn-block">決定</button>
   </form>
@@ -28,8 +29,8 @@
 
   api('/me').then((me) => {
     document.getElementById('name').value = me.name;
-    document.getElementById('comment').value = me.comment;
-    document.getElementById('workingOn').value = me.workingOn;
+    document.getElementById('issue').value = me.issue ?? '';
+    document.getElementById('effort').value = me.effort ?? '';
     document.getElementById('topic').textContent = me.topic ?? 'お題なし';
   }).catch(fail(msg));
 
