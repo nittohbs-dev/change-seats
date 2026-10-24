@@ -2,6 +2,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.file.Files;
@@ -29,8 +30,7 @@ public class SeatApp {
             "E-02", "このIDは使われています",
             "E-03", "満席です",
             "E-05", "未入力の項目があります",
-            "E-07", "100文字以内で入力してください",
-            "E-08", "着席中の人がいるテーブルは削除できません",
+            "E-07", "文字数が多すぎます（名前は100文字、課題の項目は200文字まで）",
             "I-01", "管理者アカウントを追加しました",
             "AUTH", "ログインしてください");
 
@@ -38,7 +38,7 @@ public class SeatApp {
         int port = Integer.parseInt(System.getenv().getOrDefault("PORT", "8080"));
         HttpServer server = HttpServer.create(new InetSocketAddress(port), 0);
         server.createContext("/", SeatApp::handle);
-        server.setExecutor(Executors.newFixedThreadPool(8));
+        server.setExecutor(Executors.newFixedThreadPool(32));
         server.start();
         System.out.println("Seat app (test) started: http://localhost:" + port);
     }
@@ -81,6 +81,7 @@ public class SeatApp {
             case "/register" -> { file = "register.html"; allowed = !loggedIn; }
             case "/seat-change" -> { file = "seat-change.html"; allowed = loggedIn && !admin; }
             case "/seat" -> { file = "seat.html"; allowed = loggedIn && !admin && seated; }
+            case "/office" -> { file = "office.html"; allowed = loggedIn && !admin && seated; }
             case "/account" -> { file = "account.html"; allowed = loggedIn && !admin; }
             case "/admin" -> { file = "admin.html"; allowed = admin; }
             default -> { send(ex, 404, "text/plain; charset=utf-8", "ページが見つかりません"); return; }
@@ -98,6 +99,11 @@ public class SeatApp {
         Map<String, String> f = method.equals("GET") ? Map.of() : form(ex);
 
         // ログイン不要
+        if (method.equals("GET") && p.equals("/ping")) {
+            // 画面側が「サーバーがあるか」を判定するための応答（Vercelなどサーバーがない環境ではここが404になる）
+            json(ex, 200, obj("ok", true));
+            return;
+        }
         if (method.equals("POST") && p.equals("/login")) {
             // テスト版: IDとパスワードが入っていれば誰でもログインできる（見た目だけ）
             String id = f.getOrDefault("id", ""), pw = f.getOrDefault("password", "");
@@ -135,7 +141,7 @@ public class SeatApp {
         if (method.equals("GET") && p.equals("/me")) {
             Store.Account a = store.account(user);
             json(ex, 200, obj("id", user, "admin", store.isAdmin(user),
-                    "name", a.name, "comment", a.comment, "workingOn", a.workingOn,
+                    "name", a.name, "issue", a.issue, "effort", a.effort,
                     "seated", store.seatOf(user) != null, "topic", store.todayTopicText()));
         } else if (method.equals("GET") && p.equals("/seat-map")) {
             json(ex, 200, store.seatMap(user));
@@ -143,12 +149,12 @@ public class SeatApp {
             long seatId = Long.parseLong(p.split("/")[2]);
             Store.Account a = store.personAt(seatId);
             if (a == null) { json(ex, 404, obj("error", "EMPTY", "message", "この席は空いています")); return; }
-            json(ex, 200, obj("name", a.name, "comment", a.comment, "workingOn", a.workingOn));
+            json(ex, 200, obj("name", a.name, "issue", a.issue, "effort", a.effort));
         } else if (method.equals("POST") && p.equals("/seat-change/assign")) {
-            String name = f.getOrDefault("name", ""), comment = f.getOrDefault("comment", "");
-            String bad = validate(name, true, comment, true);
+            String name = f.getOrDefault("name", "");
+            String bad = validate(name, true, 100);
             if (bad != null) { error(ex, 400, bad); return; }
-            String result = store.assign(user, name, comment);
+            String result = store.assign(user, name);
             if (result != null) { error(ex, 409, result); return; }
             json(ex, 200, obj("redirect", "/seat"));
         } else if (method.equals("POST") && p.equals("/seat/leave")) {
@@ -156,11 +162,12 @@ public class SeatApp {
             logout(ex);
             json(ex, 200, obj("redirect", "/"));
         } else if (method.equals("POST") && p.equals("/account")) {
-            String name = f.getOrDefault("name", ""), comment = f.getOrDefault("comment", "");
-            String working = f.getOrDefault("workingOn", "");
-            String bad = validate(name, true, comment, true, working, false);
+            // 課題の2項目は任意。保存した内容は、次に変更するまで残る（帰社・0時の処理でも消さない）
+            String name = f.getOrDefault("name", "");
+            String issue = f.getOrDefault("issue", ""), effort = f.getOrDefault("effort", "");
+            String bad = validate(name, true, 100, issue, false, 200, effort, false, 200);
             if (bad != null) { error(ex, 400, bad); return; }
-            store.saveProfile(user, name, comment, working);
+            store.saveProfile(user, name, issue, effort);
             json(ex, 200, obj("redirect", "/seat"));
         } else {
             json(ex, 404, obj("error", "NOT_FOUND", "message", "見つかりません"));
@@ -172,21 +179,15 @@ public class SeatApp {
             json(ex, 200, adminData());
         } else if (method.equals("POST") && p.equals("/admin/topics")) {
             String text = f.getOrDefault("text", "");
-            String bad = validate(text, true);
+            String bad = validate(text, true, 100);
             if (bad != null) { error(ex, 400, bad); return; }
             store.addTopic(text);
             json(ex, 200, adminData());
         } else if (method.equals("PUT") && p.matches("/admin/topics/\\d+")) {
             String text = f.getOrDefault("text", "");
-            String bad = validate(text, true);
+            String bad = validate(text, true, 100);
             if (bad != null) { error(ex, 400, bad); return; }
             store.editTopic(Long.parseLong(p.split("/")[3]), text);
-            json(ex, 200, adminData());
-        } else if (method.equals("POST") && p.equals("/admin/seat-tables")) {
-            store.addTable();
-            json(ex, 200, adminData());
-        } else if (method.equals("DELETE") && p.matches("/admin/seat-tables/\\d+")) {
-            if (!store.deleteTable(Long.parseLong(p.split("/")[3]))) { error(ex, 409, "E-08"); return; }
             json(ex, 200, adminData());
         } else if (method.equals("POST") && p.equals("/admin/admins")) {
             String id = f.getOrDefault("id", ""), pw = f.getOrDefault("password", "");
@@ -209,15 +210,15 @@ public class SeatApp {
         return m;
     }
 
-    /** 引数は (値, 必須か) の組。問題があればメッセージIDを返す。 */
-    static String validate(Object... pairs) {
-        for (int i = 0; i < pairs.length; i += 2) {
-            String v = (String) pairs[i];
-            if ((Boolean) pairs[i + 1] && v.isEmpty()) return "E-05";
+    /** 引数は (値, 必須か, 最大文字数) の組。問題があればメッセージIDを返す。 */
+    static String validate(Object... triples) {
+        for (int i = 0; i < triples.length; i += 3) {
+            String v = (String) triples[i];
+            if ((Boolean) triples[i + 1] && v.isEmpty()) return "E-05";
         }
-        for (int i = 0; i < pairs.length; i += 2) {
-            String v = (String) pairs[i];
-            if (v.codePointCount(0, v.length()) > 100) return "E-07";
+        for (int i = 0; i < triples.length; i += 3) {
+            String v = (String) triples[i];
+            if (v.codePointCount(0, v.length()) > (Integer) triples[i + 2]) return "E-07";
         }
         return null;
     }
@@ -266,8 +267,12 @@ public class SeatApp {
             send(ex, 404, "text/plain; charset=utf-8", "ファイルが見つかりません");
             return;
         }
-        String type = rel.endsWith(".css") ? "text/css" : rel.endsWith(".js") ? "text/javascript" : "text/html";
-        send(ex, 200, type + "; charset=utf-8", Files.readAllBytes(file));
+        String type = rel.endsWith(".css") ? "text/css; charset=utf-8"
+                : rel.endsWith(".js") ? "text/javascript; charset=utf-8"
+                : rel.endsWith(".json") ? "application/json; charset=utf-8"
+                : rel.endsWith(".glb") ? "model/gltf-binary"
+                : "text/html; charset=utf-8";
+        send(ex, 200, type, Files.readAllBytes(file));
     }
 
     static void redirect(HttpExchange ex, String to) throws IOException {
@@ -339,33 +344,30 @@ public class SeatApp {
     // ---------- データ（メモリ上。再起動で初期状態に戻る） ----------
 
     static class Store {
-        record Seat(long id, int row, int col) { }
-
-        static class Table {
-            final long id;
-            final List<Seat> seats = new ArrayList<>();
-            Table(long id) { this.id = id; }
-        }
+        /** 席。位置・向きなどの3D配置は web/office-seats.json（Blenderから書き出し）にあり、画面側が使う。 */
+        record Seat(long id, String group) { }
 
         static class Account {
             final String id;
-            String name = "", comment = "", workingOn = "";
+            /** issue: 現状の個人の課題、effort: 課題解決にむけて取り組んでいること（どちらも任意） */
+            String name = "", issue = "", effort = "";
             Account(String id) { this.id = id; }
         }
 
-        final List<Table> tables = new ArrayList<>();
+        final List<Seat> seats = new ArrayList<>();
         final Map<String, Account> accounts = new HashMap<>();
         final Set<String> admins = new HashSet<>(Set.of("admin"));
         /** 着席: 席ID → アカウントID。1席1人、1人1席。 */
         final Map<Long, String> seatings = new HashMap<>();
+        /** 着席した時刻（ミリ秒）: 席ID → 時刻。分身の動きを全端末でそろえるために画面へ渡す。 */
+        final Map<Long, Long> seatedAt = new HashMap<>();
         final Map<Long, String> topics = new LinkedHashMap<>();
         Long todayTopicId;
-        long nextTableId = 1, nextSeatId = 1, nextTopicId = 1;
+        long nextTopicId = 1;
         final Random random = new Random();
 
         Store() {
-            addTable();
-            addTable();
+            layout();
             for (String t : List.of("最近ハマっていること", "好きな食べ物", "週末にしたいこと", "子どもの頃の夢"))
                 addTopic(t);
             pickTodayTopic();
@@ -397,43 +399,42 @@ public class SeatApp {
             return who == null ? null : account(who);
         }
 
-        synchronized void saveProfile(String id, String name, String comment, String workingOn) {
+        synchronized void saveProfile(String id, String name, String issue, String effort) {
             Account a = account(id);
             a.name = name;
-            a.comment = comment;
-            a.workingOn = workingOn;
+            a.issue = issue;
+            a.effort = effort;
         }
 
         /** 席決め。成功ならnull、満席なら"E-03"。すでに着席済みなら何もしない。 */
-        synchronized String assign(String id, String name, String comment) {
+        synchronized String assign(String id, String name) {
             if (seatOf(id) != null) return null;
             Account a = account(id);
             a.name = name;
-            a.comment = comment;
             List<Long> free = new ArrayList<>();
-            for (Table t : tables) for (Seat s : t.seats) if (!seatings.containsKey(s.id())) free.add(s.id());
+            for (Seat s : seats) if (!seatings.containsKey(s.id())) free.add(s.id());
             if (free.isEmpty()) return "E-03";
-            seatings.put(free.get(random.nextInt(free.size())), id);
+            long seatId = free.get(random.nextInt(free.size()));
+            seatings.put(seatId, id);
+            seatedAt.put(seatId, System.currentTimeMillis());
             return null;
         }
 
-        synchronized void leave(String id) { seatings.values().remove(id); }
-
-        synchronized void addTable() {
-            Table t = new Table(nextTableId++);
-            for (int row = 1; row <= 2; row++)
-                for (int col = 1; col <= 4; col++) t.seats.add(new Seat(nextSeatId++, row, col));
-            tables.add(t);
+        synchronized void leave(String id) {
+            Long seatId = seatOf(id);
+            if (seatId != null) { seatings.remove(seatId); seatedAt.remove(seatId); }
         }
 
-        synchronized boolean deleteTable(long tableId) {
-            for (Table t : tables) {
-                if (t.id != tableId) continue;
-                for (Seat s : t.seats) if (seatings.containsKey(s.id())) return false;
-                tables.remove(t);
-                return true;
+        /** 席の一覧を web/office-seats.json から読む（1行に1席。席IDとグループだけ使う）。 */
+        private void layout() {
+            try {
+                var m = java.util.regex.Pattern.compile("\"id\":\\s*(\\d+),\\s*\"group\":\\s*\"([^\"]*)\"")
+                        .matcher(Files.readString(WEB.resolve("office-seats.json")));
+                while (m.find()) seats.add(new Seat(Long.parseLong(m.group(1)), m.group(2)));
+            } catch (IOException e) {
+                throw new UncheckedIOException("web/office-seats.json を読めません", e);
             }
-            return true;
+            if (seats.isEmpty()) throw new IllegalStateException("web/office-seats.json に席がありません");
         }
 
         synchronized void addTopic(String text) { topics.put(nextTopicId++, text); }
@@ -458,6 +459,7 @@ public class SeatApp {
         /** 午前0時の処理: 全員を強制帰社にして、今日のお題を選び直す。 */
         synchronized void dailyReset() {
             seatings.clear();
+            seatedAt.clear();
             pickTodayTopic();
         }
 
@@ -469,20 +471,19 @@ public class SeatApp {
 
         synchronized Map<String, Object> seatMap(String viewer) {
             List<Object> list = new ArrayList<>();
-            for (int i = 0; i < tables.size(); i++) {
-                Table t = tables.get(i);
-                List<Object> seats = new ArrayList<>();
-                for (Seat s : t.seats) {
-                    String who = seatings.get(s.id());
-                    String state = who == null ? "free" : who.equals(viewer) ? "mine" : "taken";
-                    Map<String, Object> seat = obj("id", s.id(), "row", s.row(), "col", s.col(), "state", state);
-                    if (state.equals("taken")) seat.put("initial", initialOf(account(who)));
-                    seats.add(seat);
+            for (Seat s : seats) {
+                String who = seatings.get(s.id());
+                String state = who == null ? "free" : who.equals(viewer) ? "mine" : "taken";
+                Map<String, Object> seat = obj("id", s.id(), "group", s.group(), "state", state);
+                if (who != null) {
+                    Account a = account(who);
+                    seat.put("name", a.name.isEmpty() ? a.id : a.name);
+                    seat.put("initial", initialOf(a));
+                    seat.put("since", seatedAt.getOrDefault(s.id(), 0L));
                 }
-                String label = i < 26 ? String.valueOf((char) ('A' + i)) : String.valueOf(i + 1);
-                list.add(obj("id", t.id, "label", "テーブル" + label, "seats", seats));
+                list.add(seat);
             }
-            return obj("tables", list);
+            return obj("seats", list, "now", System.currentTimeMillis());
         }
     }
 }

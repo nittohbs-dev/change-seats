@@ -5,9 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>管理用画面</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
 </head>
 <body>
-<main class="card">
+<main class="card wide">
   <div class="header">
     <h1>管理用画面</h1>
     <button type="button" class="btn-small" onclick="logoutAndGoHome()">ログアウト</button>
@@ -34,9 +35,8 @@
 
   <!-- 座席配置図 -->
   <section class="tab-panel" id="tab-tables" hidden>
-    <label>テーブルを追加・削除（1テーブル8席）</label>
-    <div id="table-list"></div>
-    <button type="button" id="table-add" class="btn-block">テーブル追加</button>
+    <label>座席配置図（着席状況を表示。名前を押すとプロフィールを表示）</label>
+    <div id="table-list" class="office-view"></div>
     <p id="table-msg" class="msg error"></p>
 
     <div class="danger-zone">
@@ -66,6 +66,7 @@
   const topicText = document.getElementById('topic-text');
   const updateBtn = document.getElementById('topic-update');
   let editingId = null;
+  const viewReady = createSeatMap(document.getElementById('table-list'));
 
   // タブ切り替え（ページを読み込み直さない）
   document.querySelectorAll('.tabs button').forEach((tab) => {
@@ -97,21 +98,8 @@
       list.append(item);
     }
 
-    // テーブル
-    const tables = document.getElementById('table-list');
-    tables.replaceChildren();
-    for (const table of data.tables) {
-      const card = el('div', 'seatmap table-card static');
-      const head = el('div', 'table-head');
-      const del = el('button', 'btn-small', '削除');
-      del.type = 'button';
-      del.addEventListener('click', () => call(`/admin/seat-tables/${table.id}`, 'DELETE', null, tableMsg));
-      head.append(el('span', null, table.label), del);
-      const mapEl = el('div');
-      renderSeatMap(mapEl, { tables: [table] }, { landmarks: false });
-      card.append(head, mapEl);
-      tables.append(card);
-    }
+    // 座席配置図
+    viewReady.then((view) => view.update(data));
   }
 
   async function call(url, method, data, msgEl) {
@@ -138,7 +126,6 @@
     else { editingId = id; updateBtn.disabled = false; }
   });
 
-  document.getElementById('table-add').addEventListener('click', () => call('/admin/seat-tables', 'POST', null, tableMsg));
 
   document.getElementById('daily-reset').addEventListener('click', async () => {
     if (!confirm('全員を強制帰社にします。よろしいですか？')) return;
@@ -157,6 +144,8 @@
 
   // 3つのタブの内容は、画面を開いた時にまとめて読み込む
   api('/admin/data').then(render).catch(fail(topicMsg));
+  // 席の状況が変わったら、座席配置図だけ更新する（入力中のお題の欄は触らない）
+  watchSeatMap(() => api('/admin/data').then((d) => viewReady.then((view) => view.update(d))).catch(() => {}));
 </script>
 </body>
 </html>

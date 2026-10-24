@@ -52,14 +52,14 @@
     <a href="/register"><button type="button" class="btn-small">アカウント作成</button></a>
   </div>
   <div class="test-hint">
-    テスト版: IDとパスワードを入れれば誰でもログインできます。<br>
-    ID を <b>admin</b> にすると管理用画面に入れます。<br>
-    別のブラウザやシークレットウィンドウで違うIDを使うと、複数人の席決めを試せます。
+    はじめての方は、右下の「アカウント作成」から登録してください。<br>
+    登録したアカウントは保存され、次回からもそのIDとパスワードで入れます。
   </div>
 </main>
 <script src="/static/app.js"></script>
 <script>
   const msg = document.getElementById('msg');
+  if (new URLSearchParams(location.search).get('registered')) showMsg(msg, 'アカウントを作成しました。ログインしてください', 'success');
   document.getElementById('form').addEventListener('submit', async (e) => {
     e.preventDefault();
     showMsg(msg, '');

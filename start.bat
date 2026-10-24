@@ -1,5 +1,6 @@
 @echo off
-cd /d "%~dp0"
-start "" http://localhost:8080
-java SeatApp.java
+rem Starts the seat app (Spring Boot). Logic and messages are in tools\start.ps1 (this file is ASCII only on purpose).
+rem   start.bat           ... start
+rem   start.bat rebuild   ... rebuild the program, then start
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\start.ps1" %*
 pause

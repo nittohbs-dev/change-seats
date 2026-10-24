@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>バーチャルオフィス</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
+</head>
+<body>
+<main class="card wide">
+  <div class="header">
+    <h1>バーチャルオフィス</h1>
+    <a href="/seat"><button type="button" class="btn-small">座席図に戻る</button></a>
+  </div>
+  <div id="map" class="office-view"></div>
+  <p id="msg" class="msg error"></p>
+  <button type="button" id="leave" class="btn-block">帰社（ログアウト）</button>
+  <p class="midnight-note">分身は、決まったルートを歩いて席に戻ります。毎日 0:00 になると、全員が自動で帰社します</p>
+</main>
+<script src="/static/app.js"></script>
+<script>
+  const msg = document.getElementById('msg');
+  const map = document.getElementById('map');
+  const viewReady = createSeatMap(map);
+
+  async function refresh() {
+    try {
+      const me = await api('/me');
+      if (!me.seated) {
+        alert('0時になったため、自動で帰社しました。');
+        return logoutAndGoHome();
+      }
+      const [data, view] = await Promise.all([api('/seat-map'), viewReady]);
+      view.update(data);
+      showMsg(msg, '');
+    } catch (err) { fail(msg)(err); }
+  }
+
+  document.getElementById('leave').addEventListener('click', async () => {
+    try {
+      const r = await api('/seat/leave', { method: 'POST' });
+      location.href = r.redirect;
+    } catch (err) { fail(msg)(err); }
+  });
+
+  refresh();
+  watchSeatMap(refresh);
+</script>
+</body>
+</html>

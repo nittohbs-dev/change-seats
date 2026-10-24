@@ -1,0 +1,11 @@
+# PostgreSQL に切り替える設定。起動時に --spring.profiles.active=postgres を付ける。
+# 接続先は環境変数 DB_URL / DB_USER / DB_PASSWORD で指定する（例：jdbc:postgresql://localhost:5432/seatapp）。
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/seatapp}
+    username: ${DB_USER:seatapp}
+    password: ${DB_PASSWORD:}
+  jpa:
+    hibernate:
+      # ローカルのテスト用：初回の起動でテーブルを自動で作る。本番では validate にして、Flyway などでテーブルを管理する
+      ddl-auto: update

@@ -1,0 +1,55 @@
+# 座席管理アプリ（テスト版）の設定。値は環境変数で上書きできる（稼働場所が決まるまで、どこでも動かせるように）
+server:
+  port: ${PORT:8080}
+  address: 0.0.0.0                 # 同じ LAN の他の PC からも使える
+  servlet:
+    session:
+      timeout: 12h
+      cookie:
+        http-only: true
+        same-site: lax
+    encoding:
+      charset: UTF-8
+      force: true
+  error:
+    include-message: never
+
+spring:
+  application:
+    name: seat-app
+  threads:
+    virtual:
+      enabled: true                # 仮想スレッド：24人が同時に接続し続けても（SSE）受付が詰まらない
+  datasource:
+    # H2（ファイル保存）。再起動してもデータが残る。PostgreSQL へは --spring.profiles.active=postgres で切り替え
+    url: ${DB_URL:jdbc:h2:file:./data/seatapp;AUTO_SERVER=TRUE}
+    username: ${DB_USER:sa}
+    password: ${DB_PASSWORD:}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update             # ローカルのテスト用。本番は Flyway などで管理する
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: Asia/Tokyo
+  jackson:
+    time-zone: Asia/Tokyo
+
+app:
+  # 画面（HTML/JS/モデル）の置き場所。サーバーは server/ で動くので、既定は ../web
+  web-dir: ${WEB_DIR:../web}
+  admin:
+    id: admin
+    password: ${SEAT_ADMIN_PASSWORD:}   # 未指定なら起動時に乱数で作り、コンソールに1回だけ表示する
+  lock:
+    max-failures: 5                # 連続して失敗できる回数
+    minutes: 5                     # ロックする時間
+  timezone: Asia/Tokyo
+
+logging:
+  level:
+    root: INFO
+    seatapp: INFO
+    # 同時に同じ席を選んだ時の一意制約違反（選び直して解決する、想定内の失敗）を、エラーとして出さない
+    org.hibernate.engine.jdbc.spi.SqlExceptionHelper: "OFF"
