@@ -14,6 +14,8 @@ public final class Messages {
             Map.entry("E-10", "IDは半角英数字の4〜20文字で入力してください"),
             Map.entry("E-11", "パスワードは8文字以上で入力してください"),
             Map.entry("I-01", "管理者アカウントを追加しました"),
+            Map.entry("KAIJU-FORBIDDEN", "怪獣ボタンを押せるのは、決められたアカウントだけです"),
+            Map.entry("KAIJU-ACTIVE", "怪獣が暴れているところです。オフィスが元に戻るまでお待ちください"),
             Map.entry("AUTH", "ログインしてください"),
             Map.entry("CSRF", "画面の有効期限が切れました。ページを読み込み直してください"));
 

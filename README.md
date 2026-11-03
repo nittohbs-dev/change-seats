@@ -21,6 +21,15 @@
 - **保存**：アカウント、名前・課題・取り組み、着席状況が、サーバーを再起動しても残る（PostgreSQL。下記）。
 - **0時の処理**：毎日 0:00（日本時間）に全員が強制帰社し、今日のお題が選ばれる。0時をまたいで止まっていた時は、起動時に補正する。
 
+## 怪獣ボタン
+
+3Dのバーチャルオフィスの左上に出る赤いボタン。押すと、全員の画面で同じ時刻に、オリジナル怪獣「モリザウルス」が北の窓の外に現れ、ビームでオフィスを壊す（分身は逃げ回る）。3分後に元に戻り、分身は席へ戻る。
+
+- **押せるのは決められたアカウントだけ**。ID は `server/src/main/resources/application.yml` の `app.kaiju.allowed-ids`（カンマ区切り。今は `xxxxx`）。その時だけ変えるなら、環境変数 `SEAT_KAIJU_IDS`（例：PowerShell で `$env:SEAT_KAIJU_IDS = 'yamada,suzuki'; .\start.bat`）。このPCだけ変えるなら `server/config/application.yml` に同じ項目を書く。
+- 変えたら `start.bat rebuild`（`application.yml` を直した時）か、再起動（環境変数・`server/config` の時）。
+- 暴れてから4分間（復旧＋席に戻るまで）は押し直せない。押した時刻はメモリにだけ置くので、サーバーを再起動すれば元の状態。
+- デモ版（Vercel）は `web/demo-backend.js` の `KAIJU_IDS` で決める。
+
 ## 構成
 
 | 場所 | 中身 |

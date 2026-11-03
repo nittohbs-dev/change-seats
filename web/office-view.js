@@ -10,18 +10,21 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { OfficeNav, speechAt } from '/static/office-nav.js';
-import { LINES } from '/static/office-lines.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { OfficeNav, speechAt, hash32, FIGHT_S, FIGHT_PHASES, KAIJU } from '/static/office-nav.js';
+import { LINES, FIGHT_LINES, ANGRY_LINES, KAIJU_LINES, RELIEF_LINES } from '/static/office-lines.js';
+import { createKaiju } from '/static/office-kaiju.js';
 
 // 家具の色（モデルにマテリアルがないので、名前の種類で塗り分ける）
 const COLORS = {
   chair: 0x4b5563, lounge_chair: 0x8a95a5, table: 0xf4efe6, side_table: 0xe2d3bd,
-  sofa: 0x9db4c4, copier: 0xe7e9ec, wall: 0xfbf8f2,
+  sofa: 0x9db4c4, copier: 0xe7e9ec, wall: 0xfbf8f2, floor: 0xeee4d6,
   treadmill: 0x5b6573,
 };
 // 走る人の色。元の Meshy_AI_Office_T_Pose_Running.glb はマテリアルなし（ビューアでは明るいグレーに見える）なので、同じ見た目にする
 const RUNNER_COLOR = 0xd9d9d9;
-const PERSON = { mine: 0x4f9bf0, taken: 0xf08a4b, skin: 0xf6d2b8, legs: 0xb89d76 };
+// 分身の色（全員同じ。自分かどうかは頭上の名前ラベルで見分ける）
+const PERSON = { body: 0x8e5cc7, eyeWhite: 0xffffff, pupil: 0x222222, sprout: 0x6fbf5a };
 
 // 移れる部屋の一覧。部屋を増やす時はここに足す（load は初めて開いた時に1回だけ呼ぶ）
 const ROOMS = [
@@ -44,6 +47,8 @@ export async function createOfficeView(container, opts = {}) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // 金属（椅子の脚・昇降部のクロムなど）が映り込む景色。明るい部屋を計算で作るので、ダウンロードは増えない
+  roomEnv = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
   const labels = new CSS2DRenderer();
   labels.domElement.className = 'office-labels';
   container.append(renderer.domElement, labels.domElement);
@@ -51,19 +56,20 @@ export async function createOfficeView(container, opts = {}) {
 
   // ---- オフィスの読み込み ----
   const [gltf, seatData, layoutData] = await Promise.all([
-    new GLTFLoader().loadAsync('/static/office.glb'),
+    new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).loadAsync('/static/office.glb'),
     fetch('/static/office-seats.json').then((r) => r.json()),
     fetch('/static/office-layout.json').then((r) => r.json()),
   ]);
   const officeModel = gltf.scene;
   paint(officeModel);
-  // 元データは家具ごとに高さの中心が0なので、家具ごとに底を床（高さ0）にそろえる
+  // Blender の床（平面）の上面を高さ0にする。家具・壁は Blender の配置のまま（床からの高さもそのまま）
   officeModel.updateMatrixWorld(true);
-  for (const child of officeModel.children) {
-    const box = new THREE.Box3().setFromObject(child);
-    child.position.y -= box.min.y;
-  }
-  const office = buildRoom(ROOMS[0], officeModel);
+  // 床は floor（Blender で色を付けてあれば mat_floor）という名前で書き出してある
+  const officeFloor = officeModel.getObjectByName('floor') ?? officeModel.getObjectByName('mat_floor');
+  officeFloor?.traverse((o) => { o.castShadow = false; });   // 床が自分に影を落として暗くならないように
+  officeModel.position.y = -(officeFloor ? new THREE.Box3().setFromObject(officeFloor).max.y : seatData.seats[0]?.floor ?? 0);
+  officeModel.updateMatrixWorld(true);
+  const office = buildRoom(ROOMS[0], { model: officeModel, floorMesh: officeFloor });
 
   // Blender の座標（Z上）→ Three.js の座標（Y上）。座面の高さは椅子の底からの高さ
   const seats = new Map(seatData.seats.map((s) => [s.id, {
@@ -97,7 +103,8 @@ export async function createOfficeView(container, opts = {}) {
   };
   const homeView = (r = room) => ({
     target: r.center.clone(),
-    position: r.center.clone().add(new THREE.Vector3(-0.4, 0.7, -0.72).setLength(fitDistance(r, r.span * 1.08))),
+    // オフィスは南西の上から見る（2D平面図と同じく、北が奥）。yogibo部屋は北西の上から
+    position: r.center.clone().add(new THREE.Vector3(-0.4, 0.7, r.id === 'office' ? 0.72 : -0.72).setLength(fitDistance(r, r.span * 1.08))),
   });
   // 真上から見る。2D平面図と同じく、北（+y）が画面の上
   const topView = (r = room) => ({
@@ -163,7 +170,22 @@ export async function createOfficeView(container, opts = {}) {
   const roomName = el('div', 'office-room-name', office.label);
   const roomBar = el('div', 'office-rooms');
   const hint = el('div', 'office-hint', 'ドラッグ：回転　右ドラッグ／2本指：移動　ホイール／ピンチ：拡大縮小　ダブルクリック：その場所へ移動');
-  container.append(toolbar, pad, roomName, roomBar, hint);
+  // 怪獣ボタン：押せるアカウントにだけ出す（座席図のデータの canKaiju）。暴れている間は、元に戻るまでの残り時間を出して押せなくする
+  const kaijuBtn = el('button', 'office-kaiju-btn', '怪獣ボタン');
+  kaijuBtn.type = 'button';
+  kaijuBtn.hidden = true;
+  kaijuBtn.addEventListener('click', async () => {
+    if (!opts.startKaiju || !confirm('怪獣「モリザウルス」を呼びますか？ 全員の画面でオフィスが壊れます（3分後に元に戻ります）')) return;
+    kaijuBtn.disabled = true;
+    try {
+      const r = await opts.startKaiju();
+      if (typeof r?.kaiju === 'number') { kaijuAt = r.kaiju; if (typeof r.now === 'number') clockOffset = r.now - Date.now(); }
+    } catch (e) {
+      alert(e?.message || '怪獣を呼べませんでした');
+    }
+    kaijuBtn.disabled = false;
+  });
+  container.append(toolbar, pad, roomName, roomBar, kaijuBtn, hint);
 
   function renderRoomButtons() {
     roomBar.replaceChildren(...ROOMS.filter((r) => r.id !== room.id).map((r) =>
@@ -261,13 +283,16 @@ export async function createOfficeView(container, opts = {}) {
   const officeSeat = [...seats.values()].find((s) => s.type === 'chair') ?? [...seats.values()][0];
   const k = officeSeat.pos.y / 0.45;   // 1m あたりの大きさ
   const nav = new OfficeNav(layoutData, seatData, { unitsPerMeter: k });
+  const kaiju = createKaiju({ scene: office.scene, model: officeModel, floorMesh: officeFloor, k });
   const figures = new Map();           // 席ID → 分身
   let seatedList = [];                 // 着席中の席 [{id, since}]
   let warmed = false;                  // 道の先読みが終わったか
   let clockOffset = 0;                 // サーバーの時刻 − この端末の時刻（全端末で同じ動きにするため）
+  let kaijuAt = null;                  // 怪獣ボタンが押された時刻（サーバーの時刻）。暴れていなければ null
+  let canKaiju = false;                // この人が怪獣ボタンを押せるか
 
   const STAND_HIP = 0.93 * k;                    // 立った時の腰の高さ
-  const THIGH = 0.42 * k, SHIN = 0.46 * k, TORSO = 0.42 * k;
+  const THIGH = 0.42 * k, SHIN = 0.46 * k;
   const CHAIR_HIP = officeSeat.pos.y + 0.07 * k;  // 事務椅子に座った時の腰の高さ
 
   /**
@@ -286,51 +311,80 @@ export async function createOfficeView(container, opts = {}) {
   }
   const ease = (t) => t * t * (3 - 2 * t);
 
-  /** 腰・膝・肩を関節（Group）にした簡単な人型。座る・立つ・歩くを、関節の角度で表す */
+  /**
+   * 分身：豆のような体（頭と胴が一体）に、出っぱった丸い目・小さな鼻・頭の芽と耳、細長い腕、ふくらんだ脚、平たい足。
+   * 腰・膝・肩を関節（Group）にして、座る・立つ・歩く・喧嘩を、関節の角度で表す。長さの単位はメートル（× k）
+   */
   function makeAvatar(mine, seat) {
     const sit = sitPose(seat);
     const root = new THREE.Group();
-    const cloth = new THREE.MeshStandardMaterial({ color: mine ? PERSON.mine : PERSON.taken, roughness: 0.6 });
-    const skin = new THREE.MeshStandardMaterial({ color: PERSON.skin, roughness: 0.7 });
-    const legMat = new THREE.MeshStandardMaterial({ color: PERSON.legs, roughness: 0.8 });
-    const mesh = (parent, geo, mat, x, y, z) => {
+    const body = new THREE.MeshStandardMaterial({ color: PERSON.body, roughness: 0.55 });
+    const eyeWhite = new THREE.MeshStandardMaterial({ color: PERSON.eyeWhite, roughness: 0.3 });
+    const pupil = new THREE.MeshStandardMaterial({ color: PERSON.pupil, roughness: 0.3 });
+    const sprout = new THREE.MeshStandardMaterial({ color: PERSON.sprout, roughness: 0.6 });
+    const mesh = (parent, geo, mat, x, y, z, scale = null) => {
       const m = new THREE.Mesh(geo, mat);
-      m.position.set(x, y, z);
+      m.position.set(x * k, y * k, z * k);
+      if (scale) m.scale.set(...scale);
       m.castShadow = true;
       parent.add(m);
       return m;
     };
+    const ball = (r, w = 16, h = 12) => new THREE.SphereGeometry(r * k, w, h);
     const pelvis = new THREE.Group();
     root.add(pelvis);
-    const torso = mesh(pelvis, new THREE.CapsuleGeometry(0.16 * k, TORSO, 4, 12), cloth, 0, 0.08 * k + TORSO / 2, 0);
-    const neckY = 0.08 * k + TORSO + 0.02 * k;
-    mesh(pelvis, new THREE.SphereGeometry(0.12 * k, 20, 16), skin, 0, neckY + 0.2 * k, 0.03 * k);
+
+    // 体：下がふくらみ、上が少し細い豆の形（腰の少し下から、高さ約0.9m）。輪郭を曲線にして回転させる
+    const outline = new THREE.SplineCurve([
+      [0, -0.08], [0.15, -0.065], [0.23, 0.0], [0.26, 0.14], [0.26, 0.28], [0.24, 0.42],
+      [0.215, 0.56], [0.2, 0.66], [0.17, 0.75], [0.1, 0.8], [0, 0.815],
+    ].map(([r, y]) => new THREE.Vector2(r * k, y * k)));
+    const torso = mesh(pelvis, new THREE.LatheGeometry(outline.getPoints(28), 28), body, 0, 0, 0);
+    // 顔（正面＝+z）：出っぱった白い目と黒目、小さな鼻
+    for (const sx of [-1, 1]) {
+      mesh(torso, ball(0.048), eyeWhite, sx * 0.075, 0.6, 0.185, [1, 1, 0.75]);
+      mesh(torso, ball(0.02, 12, 8), pupil, sx * 0.07, 0.6, 0.222);
+      // 頭の上の小さな耳
+      mesh(torso, ball(0.032, 12, 8), body, sx * 0.11, 0.765, 0, [1, 0.8, 0.8]);
+    }
+    mesh(torso, ball(0.013, 10, 8), body, 0, 0.52, 0.222);
+    // 頭の芽：少し傾いた細い茎と、葉
+    const stem = mesh(torso, new THREE.CapsuleGeometry(0.008 * k, 0.07 * k, 4, 6), sprout, 0.01, 0.85, 0);
+    stem.rotation.z = -0.3;
+    const leaf = mesh(torso, ball(0.035, 12, 8), sprout, 0.045, 0.895, 0, [1, 0.35, 0.6]);
+    leaf.rotation.z = 0.5;
+
     const leg = (sx) => {
       const thigh = new THREE.Group();
       thigh.position.set(sx * k, 0, 0);
       pelvis.add(thigh);
-      mesh(thigh, new THREE.CapsuleGeometry(0.065 * k, THIGH - 0.13 * k, 4, 8), legMat, 0, -THIGH / 2, 0);
+      // 真ん中がふくらんだ太もも・すね（球を縦に伸ばしたもの）、膝の丸い関節、前に伸びた平たい足
+      mesh(thigh, ball(0.075), body, 0, -THIGH / k / 2, 0, [1, THIGH / k / 2 / 0.075, 1]);
       const knee = new THREE.Group();
       knee.position.set(0, -THIGH, 0);
       thigh.add(knee);
-      mesh(knee, new THREE.CapsuleGeometry(0.055 * k, SHIN - 0.11 * k, 4, 8), legMat, 0, -SHIN / 2, 0);
+      mesh(knee, ball(0.05), body, 0, 0, 0);
+      mesh(knee, ball(0.065), body, 0, -SHIN / k / 2, 0, [1, (SHIN / k / 2) * 0.92 / 0.065, 1]);
+      mesh(knee, ball(0.07), body, 0, -SHIN / k - 0.02, 0.05, [0.85, 0.35, 1.5]);
       return { thigh, knee };
     };
     const arm = (sx) => {
+      // 肩は体の側面の、真ん中より少し上。細長い腕と丸い手を、体の外側に垂らす
       const shoulder = new THREE.Group();
-      shoulder.position.set(sx * k, neckY - 0.04 * k, 0);
+      shoulder.position.set(sx * 0.265 * k, 0.45 * k, 0);
       pelvis.add(shoulder);
-      mesh(shoulder, new THREE.CapsuleGeometry(0.05 * k, 0.26 * k, 4, 8), cloth, 0, -0.16 * k, 0);
+      mesh(shoulder, new THREE.CapsuleGeometry(0.032 * k, 0.48 * k, 4, 8), body, 0, -0.27, 0);
+      mesh(shoulder, ball(0.045), body, 0, -0.54, 0);
       return shoulder;
     };
-    const L = leg(-0.1), R = leg(0.1);
-    const armL = arm(-0.22), armR = arm(0.22);
+    const L = leg(-0.11), R = leg(0.11);
+    const armL = arm(-1), armR = arm(1);
 
-    // 頭上の名前（押すとプロフィール）
+    // 頭上の名前（押すとプロフィール）。芽の上に出す
     const tag = el('button', 'person-label' + (mine ? ' mine' : ''));
     tag.type = 'button';
     const label = new CSS2DObject(tag);
-    label.position.set(0, neckY + 0.2 * k + 0.45 * k, 0);
+    label.position.set(0, 1.08 * k, 0);
     pelvis.add(label);
     if (room !== office) tag.style.display = 'none';
 
@@ -343,21 +397,61 @@ export async function createOfficeView(container, opts = {}) {
     pelvis.add(bubble);
     if (room !== office) speechWrap.style.display = 'none';
 
+    // 喧嘩の演出：頭の横の怒りマークと、2人の間の土煙（土煙は勝った方の前に1つだけ出す）
+    const anger = new CSS2DObject(el('div', 'anger-mark', '💢'));
+    anger.position.set(0.16 * k, 0.86 * k, 0);
+    anger.visible = false;
+    pelvis.add(anger);
+    const dustEl = el('div', 'fight-dust');
+    for (let i = 0; i < 5; i++) dustEl.append(el('span'));
+    dustEl.append(el('b', null, '★'), el('b', null, '★'));
+    const dust = new CSS2DObject(dustEl);
+    dust.position.set(0, 0.12 * k, 0.28 * k);                   // 正面（+z）の、つかみ合っている2人の足元（体は隠さない）
+    dust.visible = false;
+    root.add(dust);
+
     office.scene.add(root);
-    return { root, pelvis, torso, L, R, armL, armR, label, bubble, speech, said: -1, mine, yaw: null, sit };
+    return { root, pelvis, torso, L, R, armL, armR, label, bubble, speech, anger, dust, said: null, mine, yaw: null, sit };
   }
 
   /** 話しているセリフに合わせて、吹き出しを出す・消す（変わった時だけ DOM を触る） */
-  function applySpeech(f, id, nowMs) {
-    const line = speechAt(nowMs, id, LINES.length);
-    if (line === f.said) return;
-    f.said = line;
-    if (line >= 0) f.speech.textContent = LINES[line];
-    f.speech.classList.toggle('on', line >= 0);
+  function applySpeech(f, id, nowMs, pose) {
+    let key = null, text = '';
+    // 喧嘩中：2人の吹き出しが重ならないよう、勝つ方 → 負ける方の順に言い合う（喧嘩ごとの番号 key と席IDから決めるので、全端末で同じ）
+    const myTurn = pose?.state === 'fight' && (pose.role === 'win' ? pose.t >= 0.3 && pose.t < 2.3 : pose.t >= 2.3 && pose.t < FIGHT_PHASES.throw);
+    if (myTurn) {
+      const i = hash32(pose.key, id) % FIGHT_LINES.length;
+      key = 'f' + i; text = FIGHT_LINES[i];
+    } else if (pose?.kaiju && kaijuAt != null) {
+      // 怪獣が出ている間：逃げながら・逃げた先で叫ぶ（4秒ごとに、半分くらいの人が）。席へ戻る時はほっとする
+      const sec = (nowMs - kaijuAt) / 1000, slot = Math.floor(sec / 4);
+      if (pose.relieved) {
+        if (hash32(slot, id, 5) % 3 === 0) { const i = hash32(kaijuAt % 1000003, id, 7) % RELIEF_LINES.length; key = 'r' + i; text = RELIEF_LINES[i]; }
+      } else if (sec < 60 && sec - slot * 4 < 3 && hash32(slot, id, 9) % 2 === 0) {
+        const i = hash32(kaijuAt % 1000003, id, slot) % KAIJU_LINES.length;
+        key = 'k' + slot + ':' + i; text = KAIJU_LINES[i];
+      }
+    } else if (pose?.angry && (pose.rt ?? 0) < 3) {
+      const i = hash32(pose.key ?? 0, id, 3) % ANGRY_LINES.length;
+      key = 'a' + i; text = ANGRY_LINES[i];
+    } else if (pose?.state !== 'fight') {
+      const line = speechAt(nowMs, id, LINES.length);
+      if (line >= 0) { key = 'n' + line; text = LINES[line]; }
+    }
+    if (key === f.said) return;
+    f.said = key;
+    if (key) f.speech.textContent = text;
+    f.speech.classList.toggle('on', !!key);
   }
 
   /** その時刻の姿（office-nav.js の poses の1人分）を、関節の角度に反映する */
   function applyPose(f, pose, dt) {
+    f.anger.visible = pose.state === 'fight' || !!pose.angry;
+    f.dust.visible = pose.state === 'fight' && pose.role === 'win' && pose.t >= 0.4 && pose.t < FIGHT_PHASES.down + 0.3;
+    f.pelvis.rotation.set(0, 0, 0);
+    f.armL.rotation.z = f.armR.rotation.z = 0;
+    if (pose.state === 'fight') { fightPose(f, pose, dt); return; }
+    if (pose.state === 'panic') { panicPose(f, pose, dt); return; }
     const e = pose.state === 'sit' ? 0 : pose.state === 'standup' || pose.state === 'sitdown' ? ease(pose.t) : 1;
     const walking = pose.state === 'walk';
     const ph = pose.phase;
@@ -380,8 +474,87 @@ export async function createOfficeView(container, opts = {}) {
     f.L.thigh.position.z = f.R.thigh.position.z = 0.05 * k * (1 - e);
     f.L.knee.rotation.x = f.sit.knee * (1 - e) + bendL;
     f.R.knee.rotation.x = f.sit.knee * (1 - e) + bendR;
-    f.armL.rotation.x = -0.6 * (1 - e) + sw * 0.5;
-    f.armR.rotation.x = -0.6 * (1 - e) - sw * 0.5;
+    const swing = pose.angry ? 0.95 : 0.5;            // 怒っている時は、腕を大きく振ってずんずん歩く
+    f.armL.rotation.x = -0.6 * (1 - e) + sw * swing;
+    f.armR.rotation.x = -0.6 * (1 - e) - sw * swing;
+    if (pose.angry && walking) f.pelvis.rotation.x = 0.1;
+    if (pose.panicRun && walking) {                  // 両手を上げて、ばたばた走って逃げる
+      f.armL.rotation.x = -2.5 + Math.sin(ph * 2) * 0.5;
+      f.armR.rotation.x = -2.5 - Math.sin(ph * 2) * 0.5;
+      f.armL.rotation.z = -0.3; f.armR.rotation.z = 0.3;
+    }
+  }
+
+  /** 逃げた先で慌てる：怪獣の方を向き、両手を振り回して、その場で足踏み・小さく跳ねる */
+  function panicPose(f, pose, dt) {
+    f.root.position.set(pose.x, 0, -pose.y);
+    let d = pose.yaw - (f.yaw ?? pose.yaw);
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    f.yaw = (f.yaw ?? pose.yaw) + Math.sign(d) * Math.min(Math.abs(d), 6 * dt);
+    f.root.rotation.y = f.yaw + Math.sin(pose.t * 2.3 + pose.x) * 0.25;
+    const t = pose.t * 9;
+    f.pelvis.position.set(0, STAND_HIP + Math.abs(Math.sin(t)) * 0.05 * k, 0);
+    f.pelvis.rotation.set(-0.08, 0, Math.sin(t * 0.5) * 0.06);
+    f.torso.position.z = 0;
+    f.L.thigh.position.z = f.R.thigh.position.z = 0;
+    f.L.thigh.rotation.x = -Math.max(0, Math.sin(t)) * 0.5;
+    f.R.thigh.rotation.x = -Math.max(0, -Math.sin(t)) * 0.5;
+    f.L.knee.rotation.x = Math.max(0, Math.sin(t)) * 0.9;
+    f.R.knee.rotation.x = Math.max(0, -Math.sin(t)) * 0.9;
+    f.armL.rotation.x = -2.7 + Math.sin(t * 1.3) * 0.6;
+    f.armR.rotation.x = -2.7 - Math.sin(t * 1.3) * 0.6;
+    f.armL.rotation.z = -0.35 - Math.sin(t) * 0.2;
+    f.armR.rotation.z = 0.35 + Math.sin(t) * 0.2;
+  }
+
+  /**
+   * 喧嘩（取っ組み合い）の姿勢。pose.t は喧嘩の経過秒（FIGHT_PHASES の区切り）、pose.role は win / lose。
+   * 寄る → 両腕で相手の肩をつかみ、前かがみで踏ん張って揺れる → 投げ：負けた方は尻もち、勝った方は両腕を上げる → 負けた方が立ち上がる
+   */
+  function fightPose(f, pose, dt) {
+    const P = FIGHT_PHASES, t = pose.t, lose = pose.role === 'lose';
+    f.root.position.set(pose.x, 0, -pose.y);
+    let d = pose.yaw - (f.yaw ?? pose.yaw);
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    f.yaw = (f.yaw ?? pose.yaw) + Math.sign(d) * Math.min(Math.abs(d), 10 * dt);
+    f.root.rotation.y = f.yaw;
+    // つかみ合い（g: 0→1）
+    const g = t < P.throw ? ease(Math.min(1, t / P.grip)) : 1;
+    let hip = STAND_HIP - 0.04 * k * g, lean = 0.3 * g, bend = 0.3 * g, armX = -1.35 * g, armZ = 0;
+    let wobble = t < P.throw ? Math.sin(t * 11) * 0.07 * g : 0;
+    let thigh = -lean - bend, knee = 2 * bend;
+    if (t >= P.throw) {
+      const r = ease(Math.min(1, (t - P.throw) / (P.down - P.throw)));   // 投げ（0→1）
+      if (lose) {
+        // 尻もち（p: 0→1→0。最後に立ち上がる）
+        const p = t < P.getUp ? r : 1 - ease((t - P.getUp) / (FIGHT_S - P.getUp));
+        lean = 0.3 * (1 - r) - 0.45 * p;
+        hip = STAND_HIP - 0.04 * k * (1 - r) + (0.14 * k - STAND_HIP) * p;
+        thigh = -lean - 0.3 * (1 - r) - 1.5 * p;
+        knee = 0.6 * (1 - r) + 0.15 * p;
+        armX = -1.35 * (1 - r) + 0.7 * p + (t >= P.down && t < P.getUp ? Math.sin(t * 14) * 0.35 : 0);   // 床で手をばたばた
+        armZ = 0.3 * p;
+      } else {
+        // 勝った方：両腕を上げて胸を張り、最後に下ろす
+        const up = t < P.getUp + 0.3 ? r : 1 - ease((t - P.getUp - 0.3) / (FIGHT_S - P.getUp - 0.3));
+        lean = 0.3 * (1 - r) - 0.12 * up;
+        hip = STAND_HIP - 0.04 * k * (1 - r);
+        thigh = -lean - 0.3 * (1 - r);
+        knee = 0.6 * (1 - r);
+        armX = -1.35 * (1 - r) - 2.8 * up;
+        armZ = 0.25 * up;
+      }
+      wobble = 0;
+    }
+    f.pelvis.position.set(0, hip, 0);
+    f.pelvis.rotation.set(lean, 0, wobble);
+    f.torso.position.z = 0;
+    f.L.thigh.rotation.x = f.R.thigh.rotation.x = thigh;
+    f.L.thigh.position.z = f.R.thigh.position.z = 0;
+    f.L.knee.rotation.x = f.R.knee.rotation.x = knee;
+    f.armL.rotation.x = f.armR.rotation.x = armX;
+    f.armL.rotation.z = -armZ;
+    f.armR.rotation.z = armZ;
   }
 
   function removePerson(id) {
@@ -390,6 +563,8 @@ export async function createOfficeView(container, opts = {}) {
     office.scene.remove(f.root);
     f.label.element.remove();
     f.bubble.element.remove();
+    f.anger.element.remove();
+    f.dust.element.remove();
     f.root.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
     figures.delete(id);
     if (panelSeat === id) closeProfile();
@@ -398,6 +573,8 @@ export async function createOfficeView(container, opts = {}) {
   /** /api/seat-map の結果で、着席者の分身と名前を更新する（別の部屋を表示中でも更新しておく） */
   function update(data) {
     if (typeof data?.now === 'number') clockOffset = data.now - Date.now();
+    if (data && 'kaiju' in data) kaijuAt = typeof data.kaiju === 'number' ? data.kaiju : null;
+    if (data && 'canKaiju' in data) canKaiju = !!data.canKaiju;
     const now = new Map((data?.seats ?? []).filter((s) => s.state !== 'free').map((s) => [s.id, s]));
     seatedList = [...now.values()].map((s) => ({ id: s.id, since: s.since ?? 0 }));
     for (const id of [...figures.keys()]) {
@@ -450,18 +627,32 @@ export async function createOfficeView(container, opts = {}) {
     }
     room.mixers?.forEach((m) => m.update(dt));   // 部屋のアニメーション（yogibo部屋の走る人・踊る人）
     if (!warmed) warmed = nav.warmUp(3) === 0;   // 24席×24ルートの道を、描画の合間に少しずつ先に計算しておく
+    const nowMs = Date.now() + clockOffset;
+    const kaijuSec = kaijuAt != null ? (nowMs - kaijuAt) / 1000 : null;
+    const shake = kaiju.update(kaijuSec);
+    // 怪獣ボタン：押せる人に、オフィスを表示している時だけ出す。暴れている間は、元に戻るまでの残り時間
+    kaijuBtn.hidden = !canKaiju || room !== office;
+    const left = kaijuSec != null ? Math.ceil(KAIJU.RESTORE_S - kaijuSec) : 0;
+    const busy = kaijuSec != null && kaijuSec < 240;
+    const label = !busy ? '怪獣ボタン' : left > 0 ? `復旧まで ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}` : '片づけ中…';
+    if (kaijuBtn.textContent !== label) kaijuBtn.textContent = label;
+    kaijuBtn.classList.toggle('busy', busy);
+    kaijuBtn.disabled = busy;
     if (figures.size) {
-      const poses = nav.poses(Date.now() + clockOffset, seatedList);
-      const nowMs = Date.now() + clockOffset;
+      const poses = nav.poses(nowMs, seatedList, kaijuAt);
       for (const [id, f] of figures) {
         const p = poses.get(id);
         if (p) applyPose(f, p, dt);
-        applySpeech(f, id, nowMs);
+        applySpeech(f, id, nowMs, p);
       }
     }
     controls.update();
+    // 怪獣が暴れている間は、画面を揺らす（描く時だけずらして、すぐ戻す）
+    const jolt = room === office && shake > 0 ? new THREE.Vector3(Math.sin(nowMs * 0.09), Math.sin(nowMs * 0.13), Math.cos(nowMs * 0.07)).multiplyScalar(shake * 0.25 * k) : null;
+    if (jolt) camera.position.add(jolt);
     renderer.render(room.scene, camera);
     labels.render(room.scene, camera);
+    if (jolt) camera.position.sub(jolt);
   });
   controls.addEventListener('start', () => { flight = null; });
 
@@ -528,20 +719,27 @@ async function loadYogibo() {
 }
 
 /** モデルを部屋の Scene に入れ、光・床・グリッドを用意する */
+let roomEnv = null;   // 映り込みの景色（createOfficeView で1回だけ作る）
+
 function buildRoom(def, loaded) {
-  const { model, mixers = null, minSpan = 0, lookHeight = 0 } = loaded.isObject3D ? { model: loaded } : loaded;
+  const { model, mixers = null, minSpan = 0, lookHeight = 0, floorMesh = null } = loaded.isObject3D ? { model: loaded } : loaded;
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0xf7f1e8);
+  if (roomEnv) { scene.environment = roomEnv; scene.environmentIntensity = 0.35; }   // 背景はそのまま、金属の映り込みだけに使う
   scene.add(model);
 
-  const bounds = new THREE.Box3().setFromObject(model);
+  // 部屋の範囲（モデル自身の床は、壁の外まで広いので含めない）
+  const bounds = new THREE.Box3();
+  const floorParts = new Set();
+  floorMesh?.traverse((o) => floorParts.add(o));
+  model.traverse((o) => { if (o.isMesh && !floorParts.has(o)) bounds.expandByObject(o); });
   const center = bounds.getCenter(new THREE.Vector3());
   const size = bounds.getSize(new THREE.Vector3());
   const span = Math.max(size.x, size.z, minSpan);
   center.y = lookHeight;
 
-  scene.add(new THREE.HemisphereLight(0xffffff, 0xd8cbb8, 1.6));
-  const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xd8cbb8, roomEnv ? 1.1 : 1.6));   // 映り込みの景色も部屋を照らすので、その分だけ弱める
+  const sun = new THREE.DirectionalLight(0xffffff, roomEnv ? 1.4 : 1.6);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.position.set(center.x + span * 0.3, span * 0.9, center.z + span * 0.4);
@@ -553,17 +751,21 @@ function buildRoom(def, loaded) {
   sc.far = span * 3;
   scene.add(sun, sun.target);
 
-  const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(span * 1.6, span * 1.6),
-    new THREE.MeshStandardMaterial({ color: 0xeee4d6, roughness: 1 }),
-  );
-  floor.rotation.x = -Math.PI / 2;
-  floor.position.set(center.x, 0, center.z);
-  floor.receiveShadow = true;
-  scene.add(floor);
-  const grid = new THREE.GridHelper(span * 1.6, 32, 0xdccfbd, 0xe6dccd);
-  grid.position.set(center.x, span * 0.0002, center.z);
-  scene.add(grid);
+  // モデルに床があれば、それを使う（ダブルクリックの位置の判定にも使う）。無ければ床とグリッドを敷く
+  let floor = floorMesh;
+  if (!floor) {
+    floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(span * 1.6, span * 1.6),
+      new THREE.MeshStandardMaterial({ color: 0xeee4d6, roughness: 1 }),
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(center.x, 0, center.z);
+    floor.receiveShadow = true;
+    scene.add(floor);
+    const grid = new THREE.GridHelper(span * 1.6, 32, 0xdccfbd, 0xe6dccd);
+    grid.position.set(center.x, span * 0.0002, center.z);
+    scene.add(grid);
+  }
 
   return { id: def.id, label: def.label, scene, center, span, floor, mixers };
 }
@@ -571,10 +773,13 @@ function buildRoom(def, loaded) {
 // 踊る人の出発点と向き（向きは進む方向。初期の視点側＝手前へ進む）。ダンスは約3m前へ進む
 const DANCER = { x: 3.5, z: 3.0, yaw: Math.atan2(-0.49, -0.87) };
 
-/** マテリアルのないモデルに、名前の種類で色を塗る */
+/** マテリアルのない家具に、名前の種類で色を塗る（名前が mat_ で始まるものは、Blender で付けた色のまま） */
 function paint(model) {
   model.traverse((o) => {
     if (!o.isMesh) return;
+    o.castShadow = true;
+    o.receiveShadow = true;
+    if (/^mat_/.test(o.name) || /^mat_/.test(o.parent?.name ?? '')) return;
     const kind = Object.keys(COLORS).find((k) => o.name.startsWith(k)) ?? 'wall';
     o.material = new THREE.MeshStandardMaterial({
       color: COLORS[kind], roughness: 0.75, metalness: kind === 'chair' || kind === 'treadmill' ? 0.15 : 0,

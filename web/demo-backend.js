@@ -63,6 +63,11 @@ window.demoBackend = (() => {
   const topicText = (s) => s.topics.find((t) => t.id === s.todayTopicId)?.text ?? null;
   const initialOf = (s, id) => [...(account(s, id).name || id)][0].toUpperCase();
 
+  // 怪獣ボタン（サーバー版の KaijuService と同じ決まり。押せるアカウントと、押し直せるまでの時間）
+  const KAIJU_IDS = ['xxxxx'];
+  const KAIJU_ACTIVE_MS = 240000;
+  const kaijuSince = (s) => (s.kaijuAt && Date.now() - s.kaijuAt < KAIJU_ACTIVE_MS ? s.kaijuAt : null);
+
   function seatMap(s, viewer) {
     return {
       seats: SEATS.map((seat) => {
@@ -73,10 +78,12 @@ window.demoBackend = (() => {
         return o;
       }),
       now: Date.now(),
+      kaiju: kaijuSince(s),
+      canKaiju: KAIJU_IDS.includes(viewer),
     };
   }
 
-  const adminData = (s) => ({ ...seatMap(s, null), topics: s.topics, todayTopic: topicText(s) });
+  const adminData = (s) => ({ ...seatMap(s, null), canKaiju: KAIJU_IDS.includes(currentUser()), topics: s.topics, todayTopic: topicText(s) });
 
   /** list は [値, 必須か, 最大文字数] の配列。問題があればメッセージIDを返す。 */
   function validate(list) {
@@ -160,6 +167,12 @@ window.demoBackend = (() => {
       return { id: user, admin: isAdmin(s, user), ...account(s, user), seated: seatOf(s, user) !== null, topic: topicText(s) };
     }
     if (method === 'GET' && url === '/seat-map') return seatMap(s, user);
+    if (method === 'POST' && url === '/kaiju') {
+      if (!KAIJU_IDS.includes(user)) throw { error: 'KAIJU-FORBIDDEN', message: '怪獣ボタンを押せるのは、決められたアカウントだけです' };
+      if (kaijuSince(s)) throw { error: 'KAIJU-ACTIVE', message: '怪獣が暴れているところです。オフィスが元に戻るまでお待ちください' };
+      s.kaijuAt = Date.now();
+      return done({ kaiju: s.kaijuAt, now: Date.now() });
+    }
     if (method === 'GET' && (m = url.match(/^\/seats\/(\d+)\/person$/))) {
       const who = s.seatings[m[1]];
       if (!who) throw { error: 'EMPTY', message: 'この席は空いています' };

@@ -46,6 +46,9 @@ app:
     max-failures: 5                # 連続して失敗できる回数
     minutes: 5                     # ロックする時間
   timezone: Asia/Tokyo
+  kaiju:
+    # 怪獣ボタンを押せるアカウントのID（カンマ区切り）。環境変数 SEAT_KAIJU_IDS で変えられる
+    allowed-ids: ${SEAT_KAIJU_IDS:xxxxx}
 
 logging:
   level:

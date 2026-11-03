@@ -109,7 +109,10 @@ async function createSeatMap(container) {
   container.replaceChildren(el('div', 'office-loading', '座席配置図を読み込み中…'));
   try {
     const { createOfficeView } = await import('/static/office-view.js');
-    return await createOfficeView(container, { fetchPerson: (id) => api(`/seats/${id}/person`) });
+    return await createOfficeView(container, {
+      fetchPerson: (id) => api(`/seats/${id}/person`),
+      startKaiju: () => api('/kaiju', { method: 'POST' }),   // 怪獣ボタン（押せる人にだけ、ボタンが出る）
+    });
   } catch (e) {
     console.error(e);
     container.replaceChildren(el('div', 'office-loading', '座席配置図を表示できませんでした（3D表示に対応したブラウザで開いてください）'));
