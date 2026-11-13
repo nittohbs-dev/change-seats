@@ -19,7 +19,18 @@
 - **アカウント登録**：ID は半角英数字 4〜20 文字、パスワードは 8 文字以上。パスワードは BCrypt でハッシュ化して保存。5回続けて失敗すると5分間ロック。
 - **全員の画面の同期**：席決め・帰社・名前やプロフィールの変更・お題の登録・0時のリセットが、全員の画面にすぐ反映される（SSE）。分身の動きとセリフは、サーバーの時刻から計算するので、全端末で同じ。
 - **保存**：アカウント、名前・課題・取り組み、着席状況が、サーバーを再起動しても残る（PostgreSQL。下記）。
+- **分身のコスチューム**：マイページ（アカウント情報）で「いつもの・スーツ・コックさん・忍者」から選べる（回る見本つき）。全員のバーチャルオフィスにすぐ反映され、変更するまで残る。形は `web/office-avatar.js`、選べる値はサーバーの `AccountService.COSTUMES` と同じにする。
+- **ノートパソコン**：席が決まると、その席の机（長机・カフェのテーブル）にノートパソコンが置かれ、座っている間は分身がキーボードを打って仕事をする（ときどき手を止めて画面を読む）。置き場所は、3Dの机の上面を調べて自動で決める（`web/office-laptop.js`）。怪獣が暴れている間はしまう。
 - **0時の処理**：毎日 0:00（日本時間）に全員が強制帰社し、今日のお題が選ばれる。0時をまたいで止まっていた時は、起動時に補正する。
+
+## 怪獣ボタン
+
+3Dのバーチャルオフィスの左上に出る赤いボタン。押すと、全員の画面で同じ時刻に、オリジナル怪獣「モリザウルス」が北の窓の外に現れ、ビームでオフィスを壊す（分身は逃げ回る）。3分後に元に戻り、分身は席へ戻る。
+
+- **押せるのは決められたアカウントだけ**。ID は `server/src/main/resources/application.yml` の `app.kaiju.allowed-ids`（カンマ区切り。今は `xxxxx`）。その時だけ変えるなら、環境変数 `SEAT_KAIJU_IDS`（例：PowerShell で `$env:SEAT_KAIJU_IDS = 'yamada,suzuki'; .\start.bat`）。このPCだけ変えるなら `server/config/application.yml` に同じ項目を書く。
+- 変えたら `start.bat rebuild`（`application.yml` を直した時）か、再起動（環境変数・`server/config` の時）。
+- 暴れてから4分間（復旧＋席に戻るまで）は押し直せない。押した時刻はメモリにだけ置くので、サーバーを再起動すれば元の状態。
+- デモ版（Vercel）は `web/demo-backend.js` の `KAIJU_IDS` で決める。
 
 ## 構成
 
@@ -42,6 +53,26 @@
 - `start.bat` は起動前に、PostgreSQL のサービスが動いているかを確認する。止まっていたら、Windows の「サービス」から開始する。
 - 中身を見る：`"C:\Program Files\PostgreSQL\17\bin\psql.exe" -h localhost -U seatapp -d seatapp`（パスワードは上のファイル）。
 - **H2（ファイル保存）に戻す**：`server/config/application.yml` を削除（または名前を変える）すれば、`server/data/` の H2 を使う。
+
+## Docker で動かす
+
+アプリと PostgreSQL を、2つのコンテナで動かす（`Dockerfile`・`docker-compose.yml`）。今の `start.bat` のサーバー（8081）・PostgreSQL のサービスとは別で、並べて動かせる。
+
+1. Docker Desktop を入れて起動する（WSL2 が必要）。
+2. `.env.example` を `.env` にコピーして、`DB_PASSWORD`・`SEAT_ADMIN_PASSWORD` を書く。**`.env` は Git に入れない（`.gitignore`）。外に出さないこと。**
+3. プロジェクトの一番上で：
+
+```
+docker compose up -d --build   # 作って起動（初回は数分）→ http://localhost:8082
+docker compose ps              # 動いているか
+docker compose logs -f app     # アプリのログ（Ctrl+C で見るのをやめる）
+docker compose down            # 止める（データは残る）
+docker compose down -v         # 止めて、データも消す
+```
+
+- データは Docker の volume（`dbdata`）に入る。今の PostgreSQL のデータは使わない（空から始まる）。移す時は `pg_dump` で書き出して、`docker compose exec -T db psql -U seatapp -d seatapp` に流し込む。
+- プログラムや `web/` を直したら、`docker compose up -d --build` で作り直す。
+- ポートは `.env` の `APP_PORT`（既定 8082）。
 
 ## 試験
 

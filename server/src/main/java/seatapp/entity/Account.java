@@ -31,6 +31,10 @@ public class Account {
     @Column(length = 200)
     public String effort = "";
 
+    /** 分身のコスチューム（none・suit・chef・ninja。AccountService.COSTUMES）。前からあるアカウントは null ＝ none */
+    @Column(length = 20)
+    public String costume = "none";
+
     @Column(name = "created_at", nullable = false)
     public Instant createdAt = Instant.now();
 

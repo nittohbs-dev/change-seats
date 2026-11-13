@@ -1,6 +1,7 @@
 package seatapp.controller;
 
 import java.util.Map;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -10,7 +11,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import seatapp.service.AccountService;
 import seatapp.service.DailyResetJob;
+import seatapp.service.AppUser;
 import seatapp.service.EventBus;
+import seatapp.service.KaijuService;
 import seatapp.service.Messages;
 import seatapp.service.SeatingService;
 import seatapp.service.TopicService;
@@ -24,36 +27,40 @@ public class AdminApiController {
     private final AccountService accounts;
     private final DailyResetJob daily;
     private final EventBus events;
+    private final KaijuService kaiju;
 
-    public AdminApiController(SeatingService seating, TopicService topics, AccountService accounts, DailyResetJob daily, EventBus events) {
+    public AdminApiController(SeatingService seating, TopicService topics, AccountService accounts, DailyResetJob daily, EventBus events,
+                              KaijuService kaiju) {
         this.seating = seating;
         this.topics = topics;
         this.accounts = accounts;
         this.daily = daily;
         this.events = events;
+        this.kaiju = kaiju;
     }
 
     /** 席の図（着席状況つき）・お題の一覧・今日のお題 */
     @GetMapping("/data")
-    Map<String, Object> data() {
+    Map<String, Object> data(@AuthenticationPrincipal AppUser user) {
         Map<String, Object> m = seating.seatMap(null);
+        SeatApiController.addKaiju(m, user.accountId(), kaiju);
         m.put("topics", topics.list());
         m.put("todayTopic", topics.todayText());
         return m;
     }
 
     @PostMapping("/topics")
-    Map<String, Object> addTopic(@RequestParam(defaultValue = "") String text) {
+    Map<String, Object> addTopic(@AuthenticationPrincipal AppUser user, @RequestParam(defaultValue = "") String text) {
         topics.add(text);
         events.changed();
-        return data();
+        return data(user);
     }
 
     @PutMapping("/topics/{id}")
-    Map<String, Object> editTopic(@PathVariable long id, @RequestParam(defaultValue = "") String text) {
+    Map<String, Object> editTopic(@AuthenticationPrincipal AppUser user, @PathVariable long id, @RequestParam(defaultValue = "") String text) {
         topics.edit(id, text);
         events.changed();
-        return data();
+        return data(user);
     }
 
     @PostMapping("/admins")
@@ -64,8 +71,8 @@ public class AdminApiController {
 
     /** テスト用：午前0時の処理（強制帰社＋お題の選び直し）をその場で実行する */
     @PostMapping("/daily-reset")
-    Map<String, Object> dailyReset() {
+    Map<String, Object> dailyReset(@AuthenticationPrincipal AppUser user) {
         daily.reset();
-        return data();
+        return data(user);
     }
 }

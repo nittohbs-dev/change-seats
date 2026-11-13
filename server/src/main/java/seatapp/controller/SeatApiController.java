@@ -15,6 +15,7 @@ import seatapp.entity.Account;
 import seatapp.service.AccountService;
 import seatapp.service.AppUser;
 import seatapp.service.EventBus;
+import seatapp.service.KaijuService;
 import seatapp.service.SeatingService;
 import seatapp.service.TopicService;
 
@@ -26,12 +27,14 @@ public class SeatApiController {
     private final SeatingService seating;
     private final TopicService topics;
     private final EventBus events;
+    private final KaijuService kaiju;
 
-    public SeatApiController(AccountService accounts, SeatingService seating, TopicService topics, EventBus events) {
+    public SeatApiController(AccountService accounts, SeatingService seating, TopicService topics, EventBus events, KaijuService kaiju) {
         this.accounts = accounts;
         this.seating = seating;
         this.topics = topics;
         this.events = events;
+        this.kaiju = kaiju;
     }
 
     @GetMapping("/me")
@@ -43,6 +46,7 @@ public class SeatApiController {
         m.put("name", a.name == null ? "" : a.name);
         m.put("issue", a.issue == null ? "" : a.issue);
         m.put("effort", a.effort == null ? "" : a.effort);
+        m.put("costume", AccountService.costumeOf(a));
         m.put("seated", seating.isSeated(a.accountId));
         m.put("topic", topics.todayText());
         return m;
@@ -50,7 +54,23 @@ public class SeatApiController {
 
     @GetMapping("/seat-map")
     Map<String, Object> seatMap(@AuthenticationPrincipal AppUser user) {
-        return seating.seatMap(user.accountId());
+        Map<String, Object> m = seating.seatMap(user.accountId());
+        addKaiju(m, user.accountId(), kaiju);
+        return m;
+    }
+
+    /** 座席図のデータに、怪獣の状態（押した時刻。暴れていなければ null）と、この人が怪獣ボタンを押せるかを足す */
+    static void addKaiju(Map<String, Object> m, String viewer, KaijuService kaiju) {
+        m.put("kaiju", kaiju.activeSince());
+        m.put("canKaiju", kaiju.allowed(viewer));
+    }
+
+    /** 怪獣ボタン。全員の画面に、同じ時刻から怪獣が現れる */
+    @PostMapping("/kaiju")
+    Map<String, Object> kaiju(@AuthenticationPrincipal AppUser user) {
+        long at = kaiju.start(user.accountId());
+        events.changed();
+        return Map.of("kaiju", at, "now", System.currentTimeMillis());
     }
 
     @GetMapping("/seats/{seatId}/person")
@@ -77,11 +97,12 @@ public class SeatApiController {
         return Map.of("redirect", "/");
     }
 
-    /** アカウント情報の保存。名前は必須、課題と取り組みは任意。変更するまで保存され続ける。 */
+    /** アカウント情報の保存。名前は必須、課題と取り組みは任意。コスチュームは送られた時だけ変える。変更するまで保存され続ける。 */
     @PostMapping("/account")
     Map<String, Object> save(@AuthenticationPrincipal AppUser user, @RequestParam(defaultValue = "") String name,
-                             @RequestParam(defaultValue = "") String issue, @RequestParam(defaultValue = "") String effort) {
-        accounts.saveProfile(user.accountId(), name, issue, effort);
+                             @RequestParam(defaultValue = "") String issue, @RequestParam(defaultValue = "") String effort,
+                             @RequestParam(defaultValue = "") String costume) {
+        accounts.saveProfile(user.accountId(), name, issue, effort, costume);
         events.changed();
         return Map.of("redirect", "/seat");
     }

@@ -12,6 +12,7 @@ window.demoBackend = (() => {
     'E-07': '文字数が多すぎます（名前は100文字、課題の項目は200文字まで）',
     'E-10': 'IDは半角英数字の4〜20文字で入力してください',
     'E-11': 'パスワードは8文字以上で入力してください',
+    'E-12': 'コスチュームを一覧から選んでください',
     'I-01': '管理者アカウントを追加しました',
     AUTH: 'ログインしてください',
   };
@@ -59,9 +60,17 @@ window.demoBackend = (() => {
 
   const isAdmin = (s, id) => s.admins.includes(id);
   const seatOf = (s, id) => Object.keys(s.seatings).find((k) => s.seatings[k] === id) ?? null;
-  const account = (s, id) => (s.accounts[id] ??= { name: '', issue: '', effort: '' });
+  const account = (s, id) => (s.accounts[id] ??= { name: '', issue: '', effort: '', costume: 'none' });
+  // 選べるコスチューム（office-avatar.js の COSTUMES・サーバー版の AccountService.COSTUMES と同じ）
+  const COSTUMES = ['none', 'suit', 'chef', 'ninja'];
+  const costumeOf = (a) => (COSTUMES.includes(a.costume) ? a.costume : 'none');
   const topicText = (s) => s.topics.find((t) => t.id === s.todayTopicId)?.text ?? null;
   const initialOf = (s, id) => [...(account(s, id).name || id)][0].toUpperCase();
+
+  // 怪獣ボタン（サーバー版の KaijuService と同じ決まり。押せるアカウントと、押し直せるまでの時間）
+  const KAIJU_IDS = ['xxxxx'];
+  const KAIJU_ACTIVE_MS = 240000;
+  const kaijuSince = (s) => (s.kaijuAt && Date.now() - s.kaijuAt < KAIJU_ACTIVE_MS ? s.kaijuAt : null);
 
   function seatMap(s, viewer) {
     return {
@@ -69,14 +78,16 @@ window.demoBackend = (() => {
         const who = s.seatings[seat.id];
         const state = !who ? 'free' : who === viewer ? 'mine' : 'taken';
         const o = { ...seat, state };
-        if (who) { o.name = account(s, who).name || who; o.initial = initialOf(s, who); o.since = (s.seatedAt ?? {})[seat.id] ?? 0; }
+        if (who) { o.name = account(s, who).name || who; o.initial = initialOf(s, who); o.since = (s.seatedAt ?? {})[seat.id] ?? 0; o.costume = costumeOf(account(s, who)); }
         return o;
       }),
       now: Date.now(),
+      kaiju: kaijuSince(s),
+      canKaiju: KAIJU_IDS.includes(viewer),
     };
   }
 
-  const adminData = (s) => ({ ...seatMap(s, null), topics: s.topics, todayTopic: topicText(s) });
+  const adminData = (s) => ({ ...seatMap(s, null), canKaiju: KAIJU_IDS.includes(currentUser()), topics: s.topics, todayTopic: topicText(s) });
 
   /** list は [値, 必須か, 最大文字数] の配列。問題があればメッセージIDを返す。 */
   function validate(list) {
@@ -157,9 +168,15 @@ window.demoBackend = (() => {
 
     let m;
     if (method === 'GET' && url === '/me') {
-      return { id: user, admin: isAdmin(s, user), ...account(s, user), seated: seatOf(s, user) !== null, topic: topicText(s) };
+      return { id: user, admin: isAdmin(s, user), ...account(s, user), costume: costumeOf(account(s, user)), seated: seatOf(s, user) !== null, topic: topicText(s) };
     }
     if (method === 'GET' && url === '/seat-map') return seatMap(s, user);
+    if (method === 'POST' && url === '/kaiju') {
+      if (!KAIJU_IDS.includes(user)) throw { error: 'KAIJU-FORBIDDEN', message: '怪獣ボタンを押せるのは、決められたアカウントだけです' };
+      if (kaijuSince(s)) throw { error: 'KAIJU-ACTIVE', message: '怪獣が暴れているところです。オフィスが元に戻るまでお待ちください' };
+      s.kaijuAt = Date.now();
+      return done({ kaiju: s.kaijuAt, now: Date.now() });
+    }
     if (method === 'GET' && (m = url.match(/^\/seats\/(\d+)\/person$/))) {
       const who = s.seatings[m[1]];
       if (!who) throw { error: 'EMPTY', message: 'この席は空いています' };
@@ -187,7 +204,8 @@ window.demoBackend = (() => {
     if (method === 'POST' && url === '/account') {
       // 課題の2項目は任意。保存した内容は、次に変更するまで残る（帰社・0時の処理でも消さない）
       const bad = validate([[f.name ?? '', true, 100], [f.issue ?? '', false, 200], [f.effort ?? '', false, 200]]); if (bad) err(bad);
-      Object.assign(account(s, user), { name: f.name, issue: f.issue ?? '', effort: f.effort ?? '' });
+      if (f.costume && !COSTUMES.includes(f.costume)) err('E-12');
+      Object.assign(account(s, user), { name: f.name, issue: f.issue ?? '', effort: f.effort ?? '' }, f.costume ? { costume: f.costume } : {});
       return done({ redirect: '/seat' });
     }
     throw { error: 'NOT_FOUND', message: '見つかりません' };

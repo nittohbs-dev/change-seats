@@ -80,13 +80,31 @@ public class AccountService {
         return accounts.findById(id).orElseThrow(() -> new ApiException(401, "AUTH"));
     }
 
+    /** 選べるコスチューム（画面の office-avatar.js の COSTUMES と同じにする） */
+    public static final java.util.Set<String> COSTUMES = java.util.Set.of("none", "suit", "chef", "ninja");
+
+    /** 保存されたコスチューム（前からあるアカウント・知らない値は none） */
+    public static String costumeOf(Account a) {
+        return a.costume != null && COSTUMES.contains(a.costume) ? a.costume : "none";
+    }
+
     /** 名前・課題・取り組みを保存する（変更するまで残る）。課題と取り組みは任意。 */
     @Transactional
     public Account saveProfile(String id, String name, String issue, String effort) {
+        return saveProfile(id, name, issue, effort, null);
+    }
+
+    /** 名前・課題・取り組み・コスチュームを保存する。コスチュームが空なら、今のままにする。選べない値は E-12 */
+    @Transactional
+    public Account saveProfile(String id, String name, String issue, String effort, String costume) {
         Account a = get(id);
         a.name = Validators.required(name, Validators.NAME_MAX);
         a.issue = Validators.optional(issue, Validators.LONG_MAX);
         a.effort = Validators.optional(effort, Validators.LONG_MAX);
+        if (costume != null && !costume.isBlank()) {
+            if (!COSTUMES.contains(costume.trim())) throw new ApiException(400, "E-12");
+            a.costume = costume.trim();
+        }
         return accounts.save(a);
     }
 

@@ -3,7 +3,7 @@
 //  2. 同時に同じルートを歩く分身がいないか／1人が同時に2か所にいないか／1ターンに収まるか
 //  3. 別々に作った計算（別の端末を想定）で、同じ時刻なら同じ位置になるか
 import { readFileSync } from 'node:fs';
-import { OfficeNav, TURN_MS, speechAt, SPEECH_SLOT_S, SPEECH_SHOW_S } from '../web/office-nav.js';
+import { OfficeNav, TURN_MS, KAIJU, speechAt, SPEECH_SLOT_S, SPEECH_SHOW_S } from '../web/office-nav.js';
 import { LINES } from '../web/office-lines.js';
 
 const read = (f) => JSON.parse(readFileSync(new URL('../web/' + f, import.meta.url), 'utf8'));
@@ -130,9 +130,99 @@ check(sdiff === 0, '同じ時刻なら、同じ人が同じセリフを話す（
   let t0 = performance.now(); cold.assignments(9001, ids); const coldMs = performance.now() - t0;
   const warm = new OfficeNav(read('office-layout.json'), read('office-seats.json'));
   t0 = performance.now(); let slices = 0; while (warm.warmUp(3) > 0) slices++; const warmAll = performance.now() - t0;
-  t0 = performance.now(); warm.assignments(9001, ids); const warmMs = performance.now() - t0;
+  t0 = performance.now(); warm.timeline(9001, ids); const warmMs = performance.now() - t0;   // 喧嘩の予定（0.1秒刻みの先読み）も含む
   console.log(`     ターン切り替わりの計算: 先に計算なし ${coldMs.toFixed(0)} ミリ秒 / 先に計算あり ${warmMs.toFixed(1)} ミリ秒（先に計算するのに全部で ${warmAll.toFixed(0)} ミリ秒、${slices + 1} 回に分けて）`);
   check(warmMs < 20, 'あらかじめ道を計算しておけば、ターンの切り替わりは20ミリ秒未満');
+}
+
+// ---- 7. 喧嘩（ぶつかった2人の約3割が取っ組み合い → 怒ったまま席へ戻る） ----
+{
+  const full = ids.map((id) => ({ id, since: 0 }));
+  let contacts = 0, fights = 0, badPair = 0, overrun = 0, notSeated = 0, through = 0, notBoth = 0, sample = null;
+  for (let turn = 7000; turn < 7200; turn++) {
+    const plans = nav.timeline(turn, ids);
+    contacts += plans.contacts;
+    const byId = new Map(plans.map((p) => [p.seatId, p]));
+    for (const p of plans) {
+      if (p.end > TURN_MS / 1000 - 0.5) overrun++;
+      if (nav.motion(p, Math.min(TURN_MS / 1000 - 0.01, p.end + 0.05)).state !== 'sit') notSeated++;
+      const f = p.fight;
+      if (!f) continue;
+      fights += 0.5;
+      const q = byId.get(f.partner);
+      if (!q?.fight || q.fight.partner !== p.seatId || q.fight.t0 !== f.t0 || q.fight.role === f.role) badPair++;
+      // 戻り道（喧嘩した場所 → 立つ場所）が、家具・壁の中を通らないか（最後の「立つ場所 → 席」は自分の椅子の中なので除く）
+      const pts = f.path.pts;
+      for (let k = 1; k < pts.length - 2; k++) {
+        const [a, b] = [pts[k], pts[k + 1]];
+        const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 0.1));
+        for (let i = 0; i <= n; i++) if (distToRects(a[0] + (b[0] - a[0]) * i / n, a[1] + (b[1] - a[1]) * i / n) <= 0) through++;
+      }
+      // 喧嘩の1秒後、2人とも fight になっているか
+      const ps = nav.poses(turn * TURN_MS + (f.t0 + 1) * 1000, full);
+      if (ps.get(p.seatId)?.state !== 'fight' || ps.get(f.partner)?.state !== 'fight') notBoth++;
+      sample ??= { turn, t0: f.t0, a: p.seatId, b: f.partner };
+    }
+  }
+  const rate = fights / Math.max(1, contacts);
+  console.log(`     200ターンで、接触 ${contacts} 回・喧嘩 ${fights} 回（${(100 * rate).toFixed(0)}%）。例: ターン ${sample?.turn} の ${sample?.t0.toFixed(1)} 秒、席 ${sample?.a} と ${sample?.b}`);
+  check(fights > 0 && rate > 0.15 && rate < 0.4, `ぶつかった時に、約3割が喧嘩になる（${(100 * rate).toFixed(0)}%。1ターンに収まらない時は喧嘩にしないので、少し下がる）`);
+  check(badPair === 0, `喧嘩は必ず2人1組で、同じ時刻に始まり、勝ち負けが分かれる（不整合: ${badPair}）`);
+  check(notBoth === 0, `喧嘩の間、2人とも喧嘩の姿勢になっている（ずれ: ${notBoth}）`);
+  check(overrun === 0 && notSeated === 0, `喧嘩した人も含め、全員がターンの終わりまでに席に座っている（はみ出し: ${overrun}、座っていない: ${notSeated}）`);
+  check(through === 0, `怒って席へ戻る道も、家具・壁の中を通らない（通った点: ${through}）`);
+  // 別々に作った計算でも、喧嘩の場面が同じになるか
+  const other = new OfficeNav(read('office-layout.json'), read('office-seats.json'));
+  let fdiff = 0, fseen = 0;
+  for (let turn = 7000; turn < 7020; turn++) {
+    for (let t = 0; t < TURN_MS; t += 250) {
+      const a = nav.poses(turn * TURN_MS + t, full), b = other.poses(turn * TURN_MS + t, full);
+      for (const [id, p] of a) {
+        const q = b.get(id);
+        if (p.state === 'fight') fseen++;
+        if (p.x !== q.x || p.y !== q.y || p.state !== q.state || p.role !== q.role || p.angry !== q.angry) fdiff++;
+      }
+    }
+  }
+  check(fseen > 0 && fdiff === 0, `別々に作った計算でも、喧嘩の相手・時刻・勝ち負け・位置が同じ（喧嘩の場面 ${fseen} 回を比較、違い: ${fdiff}）`);
+}
+
+// ---- 8. 怪獣が出た時（全員が逃げて、3分後に元に戻ったら席へ戻る） ----
+{
+  const full = ids.map((id) => ({ id, since: 0 }));
+  const at = 1793400000123;
+  const plan = nav.kaijuPlan(at, full);
+  check(plan.items.length === 24, `怪獣が出た時、24人全員に逃げる予定がある（${plan.items.length}人）`);
+  check(new Set(plan.items.map((p) => p.spot.join())).size === 24, '逃げ場所が人ごとに散らばる（重ならない）');
+  const states = (sec) => { const c = {}; for (const p of nav.poses(at + sec * 1000, full, at).values()) c[p.state] = (c[p.state] ?? 0) + 1; return c; };
+  check(states(1).sit === 24, '怪獣が出た直後（1秒）は、まだ座っている');
+  check(states(30).panic === 24, '30秒後には、全員が逃げ場所で慌てている');
+  check(states(170).panic === 24, '3分の直前（170秒）まで、逃げ場所にいる');
+  const back = (plan.end - at) / 1000;
+  check(back > KAIJU.RESTORE_S && back < KAIJU.RESTORE_S + 40, `元に戻ってから、${(back - KAIJU.RESTORE_S).toFixed(0)}秒で全員が席に戻る`);
+  const after = Math.ceil(plan.end / TURN_MS) * TURN_MS;
+  check(states((plan.end - at) / 1000 + 0.5).sit === 24, '全員が席に戻ったあと、次のターンまでは座ったまま');
+  check([...nav.poses(after + 1, full, at).values()].every((p) => p.state === 'sit' || p.state === 'standup'), 'その次のターンから、ふだんの動きに戻る');
+  // 逃げる道・戻る道が、家具・壁を通らない（最初の「席 → 立つ場所」と最後の「立つ場所 → 席」は自分の椅子の中なので除く）
+  let through = 0;
+  for (const p of plan.items) {
+    for (const [path, skipFirst] of [[p.run, !p.moving], [p.ret, false]]) {
+      const pts = path.pts;
+      for (let k = skipFirst ? 1 : 0; k < pts.length - (path === p.ret ? 2 : 1); k++) {
+        const [a, b] = [pts[k], pts[k + 1]];
+        const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 0.1));
+        for (let i = 0; i <= n; i++) if (distToRects(a[0] + (b[0] - a[0]) * i / n, a[1] + (b[1] - a[1]) * i / n) <= 0) through++;
+      }
+    }
+  }
+  check(through === 0, `逃げる道・戻る道が、家具・壁の中を通らない（通った点: ${through}）`);
+  const other = new OfficeNav(read('office-layout.json'), read('office-seats.json'));
+  let kdiff = 0;
+  for (let s = 0; s < 220; s += 0.7) {
+    const a = nav.poses(at + s * 1000, full, at), b = other.poses(at + s * 1000, full, at);
+    for (const [id, p] of a) { const q = b.get(id); if (p.x !== q.x || p.y !== q.y || p.state !== q.state) kdiff++; }
+  }
+  check(kdiff === 0, `別々に作った計算でも、怪獣の時の動きが同じ（違い: ${kdiff}）`);
 }
 
 console.log(failed ? `\n${failed} 件が失敗` : '\nすべて合格');

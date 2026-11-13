@@ -316,3 +316,95 @@ body.login .card {
   border-radius: 12px;
 }
 .office-map2d canvas { display: block; }
+
+/* ---- 分身の喧嘩：土煙と怒りマーク ---- */
+.fight-dust { position: relative; width: 0; height: 0; pointer-events: none; }
+.fight-dust span {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  margin: -12px 0 0 -12px;
+  opacity: 0.8;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #fffaf2, #e8dccb 70%);
+  box-shadow: 0 2px 6px rgba(120, 100, 80, 0.25);
+  animation: fight-puff 0.9s ease-in-out infinite;
+}
+.fight-dust span:nth-child(1) { left: -26px; top: -4px; }
+.fight-dust span:nth-child(2) { left: 22px; top: -8px; animation-delay: -0.3s; }
+.fight-dust span:nth-child(3) { left: -2px; top: 8px; animation-delay: -0.6s; }
+.fight-dust span:nth-child(4) { left: 34px; top: 8px; width: 18px; height: 18px; animation-delay: -0.15s; }
+.fight-dust span:nth-child(5) { left: -38px; top: 10px; width: 16px; height: 16px; animation-delay: -0.45s; }
+.fight-dust b {                  /* 漫画の「ぼかすか」の星 */
+  position: absolute;
+  font-size: 18px;
+  color: #f2b705;
+  text-shadow: 0 1px 0 #fff;
+  animation: fight-star 0.6s linear infinite;
+}
+.fight-dust b:nth-of-type(1) { left: -40px; top: -120px; }  /* 星は頭の高さ */
+.fight-dust b:nth-of-type(2) { left: 32px; top: -110px; animation-delay: -0.3s; }
+@keyframes fight-puff { 0%, 100% { transform: scale(0.85); } 50% { transform: scale(1.15) translateY(-4px); } }
+@keyframes fight-star { 0% { transform: rotate(0) scale(0.8); opacity: 0.6; } 50% { transform: rotate(180deg) scale(1.2); opacity: 1; } 100% { transform: rotate(360deg) scale(0.8); opacity: 0.6; } }
+.anger-mark {
+  position: relative;
+  left: 16px;
+  top: -6px;
+  font-size: 20px;
+  pointer-events: none;
+  animation: anger-pop 0.5s ease-in-out infinite alternate;
+}
+@keyframes anger-pop { from { transform: scale(0.85); } to { transform: scale(1.15); } }
+@media (prefers-reduced-motion: reduce) {
+  .fight-dust span, .fight-dust b, .anger-mark { animation: none; }
+}
+
+/* ---- 怪獣ボタン（左上、部屋の名前の下。押せるアカウントにだけ出る） ---- */
+.office-kaiju-btn {
+  position: absolute;
+  top: 40px;
+  left: 10px;
+  z-index: 2;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: #d9483b;
+  border-color: #d9483b;
+  border-radius: 999px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+.office-kaiju-btn.busy, .office-kaiju-btn:disabled { color: #fff; background: var(--muted); border-color: var(--muted); }
+
+/* ---- マイページ：分身のコスチューム（左に回る見本、右に選ぶボタン） ---- */
+.costume-picker { display: flex; gap: 12px; align-items: stretch; }
+.costume-preview {
+  flex: 0 0 150px;
+  height: 190px;
+  background: radial-gradient(circle at 50% 35%, #ffffff, var(--bg));
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.costume-preview canvas { display: block; }
+.costume-list { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-content: start; }
+.costume-option { position: relative; display: block; margin: 0; cursor: pointer; }
+.costume-option input { position: absolute; opacity: 0; pointer-events: none; }
+.costume-option span {
+  display: block;
+  height: 100%;
+  padding: 8px 10px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+}
+.costume-option small { display: block; margin-top: 2px; font-size: 11px; font-weight: 400; color: var(--muted); }
+.costume-option input:checked + span { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+.costume-option input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (max-width: 480px) {
+  .costume-picker { flex-direction: column; }
+  .costume-preview { flex-basis: auto; height: 180px; }
+}
