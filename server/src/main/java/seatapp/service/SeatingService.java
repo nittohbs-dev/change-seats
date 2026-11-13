@@ -115,6 +115,7 @@ public class SeatingService {
                 seat.put("name", shown);
                 seat.put("initial", new String(Character.toChars(shown.codePointAt(0))).toUpperCase());
                 seat.put("since", st.seatedAt.toEpochMilli());   // 着席時刻（分身の動きを全端末でそろえるため）
+                seat.put("costume", a == null ? "none" : AccountService.costumeOf(a));   // 分身のコスチューム
             }
             list.add(seat);
         }

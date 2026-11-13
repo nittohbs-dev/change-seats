@@ -375,3 +375,36 @@ body.login .card {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
 }
 .office-kaiju-btn.busy, .office-kaiju-btn:disabled { color: #fff; background: var(--muted); border-color: var(--muted); }
+
+/* ---- マイページ：分身のコスチューム（左に回る見本、右に選ぶボタン） ---- */
+.costume-picker { display: flex; gap: 12px; align-items: stretch; }
+.costume-preview {
+  flex: 0 0 150px;
+  height: 190px;
+  background: radial-gradient(circle at 50% 35%, #ffffff, var(--bg));
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.costume-preview canvas { display: block; }
+.costume-list { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-content: start; }
+.costume-option { position: relative; display: block; margin: 0; cursor: pointer; }
+.costume-option input { position: absolute; opacity: 0; pointer-events: none; }
+.costume-option span {
+  display: block;
+  height: 100%;
+  padding: 8px 10px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+}
+.costume-option small { display: block; margin-top: 2px; font-size: 11px; font-weight: 400; color: var(--muted); }
+.costume-option input:checked + span { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+.costume-option input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (max-width: 480px) {
+  .costume-picker { flex-direction: column; }
+  .costume-preview { flex-basis: auto; height: 180px; }
+}

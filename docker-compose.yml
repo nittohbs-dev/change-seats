@@ -1,0 +1,38 @@
+# アプリと PostgreSQL を、2つのコンテナで動かす。パスワードなどは同じフォルダの .env（Git に入れない）から読む
+# 起動：docker compose up -d --build　→　http://localhost:8082
+name: seat-app        # フォルダ名（日本語）はプロジェクト名に使えないので、決めておく
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: seatapp
+      POSTGRES_USER: seatapp
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?.env に DB_PASSWORD を書く}
+      TZ: Asia/Tokyo
+    volumes:
+      - dbdata:/var/lib/postgresql/data   # データはここ（コンテナを作り直しても残る）
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seatapp -d seatapp"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    # ポートは外に出さない（アプリのコンテナからだけ使う）
+
+  app:
+    build: .
+    ports:
+      - "${APP_PORT:-8082}:8081"           # このPCのポート : コンテナの中のポート
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/seatapp
+      DB_USER: seatapp
+      DB_PASSWORD: ${DB_PASSWORD}
+      SEAT_ADMIN_PASSWORD: ${SEAT_ADMIN_PASSWORD:-}
+      SEAT_KAIJU_IDS: ${SEAT_KAIJU_IDS:-xxxxx}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  dbdata:

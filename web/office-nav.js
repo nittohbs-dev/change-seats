@@ -581,16 +581,22 @@ export class OfficeNav {
   }
 
   // ---- 怪獣が出た時：大慌てで逃げて、復旧したら席へ戻る ----
-  /** 逃げる先の候補：怪獣（北）から遠い、南側の歩ける場所を、少しずつ離して選ぶ */
+  /** 逃げる先の候補：怪獣（北）から遠い、南側の歩ける場所を、少しずつ離して選ぶ（全員が重ならない数になるまで、間を詰める） */
   safeSpots() {
     if (this._safe) return this._safe;
-    const b = this.b, south = b.y0 + (b.y1 - b.y0) * 0.32, out = [];
-    for (let y = b.y0 + 3; y < south; y += 3) {
-      for (let x = b.x0 + 3; x < b.x1 - 3; x += 3) {
-        const [i, j] = this.cellOf(x, y);
-        if (this.reach[j * this.nx + i]) out.push(this.cellCenter(i, j));
+    const b = this.b, south = b.y0 + (b.y1 - b.y0) * 0.32;
+    let out = [];
+    for (const step of [3, 2.5, 2, 1.5]) {
+      out = [];
+      for (let y = b.y0 + 3; y < south; y += step) {
+        for (let x = b.x0 + 3; x < b.x1 - 3; x += step) {
+          const [i, j] = this.cellOf(x, y);
+          if (this.reach[j * this.nx + i]) out.push(this.cellCenter(i, j));
+        }
       }
+      if (out.length >= 30) break;
     }
+    out = [...new Map(out.map((p) => [p.join(), p])).values()];   // 升目が同じになった候補は1つに
     this._safe = out;
     return out;
   }

@@ -134,6 +134,19 @@ class SeatAppTests {
     }
 
     @Test
+    void コスチュームを選んで保存でき_座席図にも出る() {
+        accounts.register("dressuser", "password1", false);
+        seating.assign("dressuser", "着替える人");
+        assertThat(AccountService.costumeOf(accountRepo.findById("dressuser").orElseThrow())).isEqualTo("none");   // 最初はいつもの
+        accounts.saveProfile("dressuser", "着替える人", "", "", "ninja");
+        accounts.saveProfile("dressuser", "着替える人", "", "");                                                 // 送られなければ、そのまま
+        assertThat(accountRepo.findById("dressuser").orElseThrow().costume).isEqualTo("ninja");
+        assertThat(code(() -> accounts.saveProfile("dressuser", "着替える人", "", "", "pirate"))).isEqualTo("E-12");   // 一覧にないもの
+        @SuppressWarnings("unchecked") List<Map<String, Object>> list = (List<Map<String, Object>>) seating.seatMap("dressuser").get("seats");
+        assertThat(list.stream().filter((s) -> "mine".equals(s.get("state"))).findFirst().orElseThrow().get("costume")).isEqualTo("ninja");
+    }
+
+    @Test
     void 怪獣ボタンは決められたアカウントだけが押せて_暴れている間は押し直せない() {
         KaijuService k = new KaijuService("boss1, boss2");
         assertThat(k.activeSince()).isNull();

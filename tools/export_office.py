@@ -1,5 +1,5 @@
 # オフィスの Blender ファイルをブラウザ用に書き出す（.blend は保存しない）
-# 使い方: blender -b "C:/Users/yyy20/OneDrive/ドキュメント/office_greige_wood.blend" --python tools/export_office.py
+# 使い方: blender -b "C:/Users/yyy20/OneDrive/ドキュメント/office_clean_conference_table_legs.blend" --python tools/export_office.py
 # そのあと、GLB を圧縮する（画像を縮小して WebP に。形は meshopt で圧縮）:
 #   npx -y @gltf-transform/cli@4 meshopt web/office.glb web/office.glb
 #   npx -y @gltf-transform/cli@4 resize web/office.glb web/office.glb --width 1024 --height 1024
@@ -8,7 +8,7 @@
 #
 # 書き出すもの（どれも web/ に置く）
 #  - office.glb          3Dモデル。重いもの（椅子など）は軽量化し、同じ種類の椅子は1つの形を共有させる
-#  - office-seats.json   席（長机の椅子18脚・ラウンジの椅子3脚・長いソファ3席＝24席）の位置・向き・座面の高さ
+#  - office-seats.json   席（長机の椅子18脚・ラウンジ（カフェ）の椅子3脚・長いソファ3席＝24席）の位置・向き・座面の高さ
 #  - office-layout.json  2D平面図と、分身が歩ける場所の計算に使う「床面の形」と、ルートの目印の場所
 #
 # 座標は Blender の XY（床）と Z（上）。床の高さは、床の板（平面）の上面。
@@ -20,6 +20,9 @@ CELL = 0.5            # 床面の形を取る細かさ
 BODY = 10.5           # 分身がぶつかる高さ（床から。約1.9m）
 
 # ---------------- 下ごしらえ ----------------
+# 0. 編集モードのまま保存されたファイルでも動くように、オブジェクトモードにする
+if bpy.context.object and bpy.context.object.mode != 'OBJECT':
+    bpy.ops.object.mode_set(mode='OBJECT')
 # 1. 描画しない（非表示・レンダリング対象外の）ものは消す。古い椅子・古いコピー機・形のバックアップなど
 #    （コレクションの「インスタンス」で使われる共有モデルは、シーンに置かれていないだけなので残す）
 instanced = {o.instance_collection for o in bpy.data.objects if o.instance_type == 'COLLECTION' and o.instance_collection}
@@ -46,9 +49,19 @@ def roots_named(word):
     return [o for o in bpy.data.objects if o.parent is None and o.type == 'EMPTY' and word in o.name and o.children]
 
 
-# 2. 部品で作った椅子・複合機を、1つずつにまとめる
+# 2. 部品で作った椅子・複合機・カフェの椅子を、1つずつにまとめる
 for r in roots_named('オフィスチェア'): join_parts(list(r.children_recursive), 'chair_src')
 for r in roots_named('複合機'): join_parts(list(r.children_recursive), 'copier_src')
+for r in roots_named('カフェチェア'): join_parts(list(r.children_recursive), 'cafe_src')
+# ソファのまとまりには、長いソファ（中央）と、東のブースのソファ（名前の末尾 .001〜）が入っている。
+# 長いソファは1つに、ブースのソファは1脚ずつ（末尾ごと）にまとめる
+for r in roots_named('ロングソファ'):
+    by_suffix = {}
+    for c in r.children_recursive:
+        if c.type == 'MESH':
+            by_suffix.setdefault(c.name.rsplit('.', 1)[1] if '.' in c.name else '', []).append(c)
+    for suf, parts in by_suffix.items():
+        join_parts(parts, 'sofa_src' if suf == '' else 'booth_src')
 # 3. 共有モデル（コレクションのインスタンス）は、まとめてから、配置用の空のオブジェクトの数だけ実物にする（形は共有）
 for c in instanced:
     linked = c.name not in bpy.context.scene.collection.children
@@ -103,6 +116,13 @@ def kind(o):
     if f in by_faces: return by_faces[f]
     if n.startswith('chair_src'): return 'chair'        # 部品で作った椅子（下ごしらえで1つにまとめたもの）
     if n.startswith('copier_src'): return 'copier'
+    if n.startswith('回転チェア'): return 'chair'         # 東の長机の椅子（office_clean_conference_table_legs.blend）
+    if n.startswith('cafe_src'): return 'lounge_chair'  # カフェの椅子（ラウンジの席）
+    if n.startswith('カフェテーブル'): return 'side_table'
+    if n.startswith('sofa_src'): return 'sofa'
+    if n.startswith('booth_src'): return 'sofa2'        # ブースのソファ（席にはしない）
+    if n.startswith('メタルラック'): return 'shelf'
+    if n.startswith('会議テーブル'): return 'table'      # 長机の脚
     if n.startswith('vase'): return 'plant'
     if n.startswith('Modju'): return 'sofa2'
     if n.startswith('OfficeDesk'): return 'desk'
@@ -294,7 +314,7 @@ anchors = {
     'lounge': rect([o for o in objs if KINDS[o.name] in ('lounge_chair', 'side_table', 'sofa')]),
     'modju': rect(named('Modju')),
     'tv': rect(named('TV_Panel')[:1]),
-    'shelf': rect(named('Pole_2')[:1] + named('Shelf')),
+    'shelf': rect((named('Pole_2') or named('メタルラック'))[:1] + named('Shelf')),
     'sign': rect(named('NBS') + named('Mark')),
     'partition': rect([o for o in objs if o.name == '立方体']),
 }
@@ -426,7 +446,7 @@ for o in objs:
     k = KINDS[o.name]
     if o.name.startswith('Panel'):
         o.data = box_mesh(o)
-    elif k in SHARED and len(o.data.polygons) > SHARED[k] * 2 and not o.name.startswith('chair_src'):   # 部品で作った椅子は、もともと軽いのでそのまま
+    elif k in SHARED and len(o.data.polygons) > SHARED[k] * 2 and not o.name.startswith(('chair_src', 'cafe_src')):   # 部品で作った椅子は、1脚ずつ置き方が違うので形を共有させない
         if k not in shared:
             shared[k] = decimated(o, SHARED[k]); shared[k].name = k
             print('DECIMATED shared', k, len(shared[k].polygons))

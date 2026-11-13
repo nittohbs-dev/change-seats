@@ -14,6 +14,8 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { OfficeNav, speechAt, hash32, FIGHT_S, FIGHT_PHASES, KAIJU } from '/static/office-nav.js';
 import { LINES, FIGHT_LINES, ANGRY_LINES, KAIJU_LINES, RELIEF_LINES } from '/static/office-lines.js';
 import { createKaiju } from '/static/office-kaiju.js';
+import { buildAvatar, costumeOf } from '/static/office-avatar.js';
+import { createLaptops } from '/static/office-laptop.js';
 
 // 家具の色（モデルにマテリアルがないので、名前の種類で塗り分ける）
 const COLORS = {
@@ -23,8 +25,6 @@ const COLORS = {
 };
 // 走る人の色。元の Meshy_AI_Office_T_Pose_Running.glb はマテリアルなし（ビューアでは明るいグレーに見える）なので、同じ見た目にする
 const RUNNER_COLOR = 0xd9d9d9;
-// 分身の色（全員同じ。自分かどうかは頭上の名前ラベルで見分ける）
-const PERSON = { body: 0x8e5cc7, eyeWhite: 0xffffff, pupil: 0x222222, sprout: 0x6fbf5a };
 
 // 移れる部屋の一覧。部屋を増やす時はここに足す（load は初めて開いた時に1回だけ呼ぶ）
 const ROOMS = [
@@ -283,6 +283,7 @@ export async function createOfficeView(container, opts = {}) {
   const officeSeat = [...seats.values()].find((s) => s.type === 'chair') ?? [...seats.values()][0];
   const k = officeSeat.pos.y / 0.45;   // 1m あたりの大きさ
   const nav = new OfficeNav(layoutData, seatData, { unitsPerMeter: k });
+  const laptops = createLaptops(officeModel, seats, k);   // 机の上の置き場所は、怪獣で壊れる前の形で決めておく
   const kaiju = createKaiju({ scene: office.scene, model: officeModel, floorMesh: officeFloor, k });
   const figures = new Map();           // 席ID → 分身
   let seatedList = [];                 // 着席中の席 [{id, since}]
@@ -312,79 +313,17 @@ export async function createOfficeView(container, opts = {}) {
   const ease = (t) => t * t * (3 - 2 * t);
 
   /**
-   * 分身：豆のような体（頭と胴が一体）に、出っぱった丸い目・小さな鼻・頭の芽と耳、細長い腕、ふくらんだ脚、平たい足。
-   * 腰・膝・肩を関節（Group）にして、座る・立つ・歩く・喧嘩を、関節の角度で表す。長さの単位はメートル（× k）
+   * 分身（形とコスチュームは office-avatar.js）に、頭上の名前・吹き出し・喧嘩の演出を付けて、オフィスに置く
    */
-  function makeAvatar(mine, seat) {
+  function makeAvatar(mine, seat, costume) {
     const sit = sitPose(seat);
-    const root = new THREE.Group();
-    const body = new THREE.MeshStandardMaterial({ color: PERSON.body, roughness: 0.55 });
-    const eyeWhite = new THREE.MeshStandardMaterial({ color: PERSON.eyeWhite, roughness: 0.3 });
-    const pupil = new THREE.MeshStandardMaterial({ color: PERSON.pupil, roughness: 0.3 });
-    const sprout = new THREE.MeshStandardMaterial({ color: PERSON.sprout, roughness: 0.6 });
-    const mesh = (parent, geo, mat, x, y, z, scale = null) => {
-      const m = new THREE.Mesh(geo, mat);
-      m.position.set(x * k, y * k, z * k);
-      if (scale) m.scale.set(...scale);
-      m.castShadow = true;
-      parent.add(m);
-      return m;
-    };
-    const ball = (r, w = 16, h = 12) => new THREE.SphereGeometry(r * k, w, h);
-    const pelvis = new THREE.Group();
-    root.add(pelvis);
+    const { root, pelvis, torso, L, R, armL, armR, top } = buildAvatar(THREE, k, costume);
 
-    // 体：下がふくらみ、上が少し細い豆の形（腰の少し下から、高さ約0.9m）。輪郭を曲線にして回転させる
-    const outline = new THREE.SplineCurve([
-      [0, -0.08], [0.15, -0.065], [0.23, 0.0], [0.26, 0.14], [0.26, 0.28], [0.24, 0.42],
-      [0.215, 0.56], [0.2, 0.66], [0.17, 0.75], [0.1, 0.8], [0, 0.815],
-    ].map(([r, y]) => new THREE.Vector2(r * k, y * k)));
-    const torso = mesh(pelvis, new THREE.LatheGeometry(outline.getPoints(28), 28), body, 0, 0, 0);
-    // 顔（正面＝+z）：出っぱった白い目と黒目、小さな鼻
-    for (const sx of [-1, 1]) {
-      mesh(torso, ball(0.048), eyeWhite, sx * 0.075, 0.6, 0.185, [1, 1, 0.75]);
-      mesh(torso, ball(0.02, 12, 8), pupil, sx * 0.07, 0.6, 0.222);
-      // 頭の上の小さな耳
-      mesh(torso, ball(0.032, 12, 8), body, sx * 0.11, 0.765, 0, [1, 0.8, 0.8]);
-    }
-    mesh(torso, ball(0.013, 10, 8), body, 0, 0.52, 0.222);
-    // 頭の芽：少し傾いた細い茎と、葉
-    const stem = mesh(torso, new THREE.CapsuleGeometry(0.008 * k, 0.07 * k, 4, 6), sprout, 0.01, 0.85, 0);
-    stem.rotation.z = -0.3;
-    const leaf = mesh(torso, ball(0.035, 12, 8), sprout, 0.045, 0.895, 0, [1, 0.35, 0.6]);
-    leaf.rotation.z = 0.5;
-
-    const leg = (sx) => {
-      const thigh = new THREE.Group();
-      thigh.position.set(sx * k, 0, 0);
-      pelvis.add(thigh);
-      // 真ん中がふくらんだ太もも・すね（球を縦に伸ばしたもの）、膝の丸い関節、前に伸びた平たい足
-      mesh(thigh, ball(0.075), body, 0, -THIGH / k / 2, 0, [1, THIGH / k / 2 / 0.075, 1]);
-      const knee = new THREE.Group();
-      knee.position.set(0, -THIGH, 0);
-      thigh.add(knee);
-      mesh(knee, ball(0.05), body, 0, 0, 0);
-      mesh(knee, ball(0.065), body, 0, -SHIN / k / 2, 0, [1, (SHIN / k / 2) * 0.92 / 0.065, 1]);
-      mesh(knee, ball(0.07), body, 0, -SHIN / k - 0.02, 0.05, [0.85, 0.35, 1.5]);
-      return { thigh, knee };
-    };
-    const arm = (sx) => {
-      // 肩は体の側面の、真ん中より少し上。細長い腕と丸い手を、体の外側に垂らす
-      const shoulder = new THREE.Group();
-      shoulder.position.set(sx * 0.265 * k, 0.45 * k, 0);
-      pelvis.add(shoulder);
-      mesh(shoulder, new THREE.CapsuleGeometry(0.032 * k, 0.48 * k, 4, 8), body, 0, -0.27, 0);
-      mesh(shoulder, ball(0.045), body, 0, -0.54, 0);
-      return shoulder;
-    };
-    const L = leg(-0.11), R = leg(0.11);
-    const armL = arm(-1), armR = arm(1);
-
-    // 頭上の名前（押すとプロフィール）。芽の上に出す
+    // 頭上の名前（押すとプロフィール）。芽（コック帽）の上に出す
     const tag = el('button', 'person-label' + (mine ? ' mine' : ''));
     tag.type = 'button';
     const label = new CSS2DObject(tag);
-    label.position.set(0, 1.08 * k, 0);
+    label.position.set(0, top * k, 0);
     pelvis.add(label);
     if (room !== office) tag.style.display = 'none';
 
@@ -411,7 +350,7 @@ export async function createOfficeView(container, opts = {}) {
     root.add(dust);
 
     office.scene.add(root);
-    return { root, pelvis, torso, L, R, armL, armR, label, bubble, speech, anger, dust, said: null, mine, yaw: null, sit };
+    return { root, pelvis, torso, L, R, armL, armR, label, bubble, speech, anger, dust, said: null, mine, costume, yaw: null, sit };
   }
 
   /** 話しているセリフに合わせて、吹き出しを出す・消す（変わった時だけ DOM を触る） */
@@ -449,6 +388,7 @@ export async function createOfficeView(container, opts = {}) {
     f.anger.visible = pose.state === 'fight' || !!pose.angry;
     f.dust.visible = pose.state === 'fight' && pose.role === 'win' && pose.t >= 0.4 && pose.t < FIGHT_PHASES.down + 0.3;
     f.pelvis.rotation.set(0, 0, 0);
+    f.torso.rotation.x = 0;
     f.armL.rotation.z = f.armR.rotation.z = 0;
     if (pose.state === 'fight') { fightPose(f, pose, dt); return; }
     if (pose.state === 'panic') { panicPose(f, pose, dt); return; }
@@ -478,11 +418,29 @@ export async function createOfficeView(container, opts = {}) {
     f.armL.rotation.x = -0.6 * (1 - e) + sw * swing;
     f.armR.rotation.x = -0.6 * (1 - e) - sw * swing;
     if (pose.angry && walking) f.pelvis.rotation.x = 0.1;
+    if (f.typing && f.laptop?.visible && e < 1) typePose(f, 1 - e);
     if (pose.panicRun && walking) {                  // 両手を上げて、ばたばた走って逃げる
       f.armL.rotation.x = -2.5 + Math.sin(ph * 2) * 0.5;
       f.armR.rotation.x = -2.5 - Math.sin(ph * 2) * 0.5;
       f.armL.rotation.z = -0.3; f.armR.rotation.z = 0.3;
     }
+  }
+
+  /**
+   * 座っている間は、ノートパソコンで仕事をする：両手をキーボードに置いて、左右の指で交互に打つ。
+   * 9秒のうち約2.5秒は手を止めて、少し身を乗り出して画面を読む（始まる時刻は人ごとにずらす）。w は座っている度合い（立ち上がる途中は 1→0）
+   */
+  function typePose(f, w) {
+    const T = f.typing, t = (Date.now() + clockOffset) / 1000 + f.typeShift;
+    const reading = t % 9 > 6.5;
+    const tapL = reading ? 0 : Math.max(0, Math.sin(t * 17)) * 0.07;
+    const tapR = reading ? 0 : Math.max(0, Math.sin(t * 17 + 2.1)) * 0.07;
+    const mix = (from, to) => from + (to - from) * w;
+    f.armL.rotation.x = mix(f.armL.rotation.x, T.aL + tapL);
+    f.armR.rotation.x = mix(f.armR.rotation.x, T.aR + tapR);
+    f.armL.rotation.z = mix(f.armL.rotation.z, T.bL);
+    f.armR.rotation.z = mix(f.armR.rotation.z, T.bR);
+    f.torso.rotation.x = w * (reading ? 0.09 : 0.04);
   }
 
   /** 逃げた先で慌てる：怪獣の方を向き、両手を振り回して、その場で足踏み・小さく跳ねる */
@@ -561,6 +519,7 @@ export async function createOfficeView(container, opts = {}) {
     const f = figures.get(id);
     if (!f) return;
     office.scene.remove(f.root);
+    if (f.laptop) office.scene.remove(f.laptop);   // 形と色は全員で共有しているので、捨てない
     f.label.element.remove();
     f.bubble.element.remove();
     f.anger.element.remove();
@@ -578,14 +537,21 @@ export async function createOfficeView(container, opts = {}) {
     const now = new Map((data?.seats ?? []).filter((s) => s.state !== 'free').map((s) => [s.id, s]));
     seatedList = [...now.values()].map((s) => ({ id: s.id, since: s.since ?? 0 }));
     for (const id of [...figures.keys()]) {
-      if (!now.has(id) || figures.get(id).mine !== (now.get(id).state === 'mine')) removePerson(id);
+      // 座っている人が変わった・コスチュームを着替えた時は、作り直す
+      const s = now.get(id), f = figures.get(id);
+      if (!s || f.mine !== (s.state === 'mine') || f.costume !== costumeOf(s.costume)) removePerson(id);
     }
     for (const [id, s] of now) {
       if (!seats.has(id)) continue;
       if (!figures.has(id)) {
-        const f = makeAvatar(s.state === 'mine', seats.get(id));
+        const f = makeAvatar(s.state === 'mine', seats.get(id), costumeOf(s.costume));
         f.label.element.addEventListener('click', (e) => { e.stopPropagation(); openProfile(id); });
         f.label.element.addEventListener('pointerdown', (e) => e.stopPropagation());
+        // 席が決まったら、その席の机にノートパソコンを置く（立って歩いている間も、机に置いたまま）
+        f.laptop = laptops.make(id);
+        if (f.laptop) office.scene.add(f.laptop);
+        f.typing = laptops.arms(id, f.sit.hip);
+        f.typeShift = (hash32(id, 11) % 900) / 100;
         figures.set(id, f);
         const seat = seats.get(id);
         applyPose(f, { x: seat.x, y: seat.y, yaw: seat.rot, state: 'sit', t: 0, phase: 0 }, 0);
@@ -640,7 +606,9 @@ export async function createOfficeView(container, opts = {}) {
     kaijuBtn.disabled = busy;
     if (figures.size) {
       const poses = nav.poses(nowMs, seatedList, kaijuAt);
+      const laptopsOn = !(kaijuSec != null && kaijuSec >= 0 && kaijuSec < KAIJU.RESTORE_S);   // 怪獣でオフィスが壊れている間は、しまう
       for (const [id, f] of figures) {
+        if (f.laptop) f.laptop.visible = laptopsOn;
         const p = poses.get(id);
         if (p) applyPose(f, p, dt);
         applySpeech(f, id, nowMs, p);

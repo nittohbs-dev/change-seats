@@ -46,6 +46,7 @@ public class SeatApiController {
         m.put("name", a.name == null ? "" : a.name);
         m.put("issue", a.issue == null ? "" : a.issue);
         m.put("effort", a.effort == null ? "" : a.effort);
+        m.put("costume", AccountService.costumeOf(a));
         m.put("seated", seating.isSeated(a.accountId));
         m.put("topic", topics.todayText());
         return m;
@@ -96,11 +97,12 @@ public class SeatApiController {
         return Map.of("redirect", "/");
     }
 
-    /** アカウント情報の保存。名前は必須、課題と取り組みは任意。変更するまで保存され続ける。 */
+    /** アカウント情報の保存。名前は必須、課題と取り組みは任意。コスチュームは送られた時だけ変える。変更するまで保存され続ける。 */
     @PostMapping("/account")
     Map<String, Object> save(@AuthenticationPrincipal AppUser user, @RequestParam(defaultValue = "") String name,
-                             @RequestParam(defaultValue = "") String issue, @RequestParam(defaultValue = "") String effort) {
-        accounts.saveProfile(user.accountId(), name, issue, effort);
+                             @RequestParam(defaultValue = "") String issue, @RequestParam(defaultValue = "") String effort,
+                             @RequestParam(defaultValue = "") String costume) {
+        accounts.saveProfile(user.accountId(), name, issue, effort, costume);
         events.changed();
         return Map.of("redirect", "/seat");
     }

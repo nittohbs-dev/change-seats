@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>アカウント情報</title>
   <link rel="stylesheet" href="/static/style.css">
+  <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
 </head>
 <body>
 <main class="card">
@@ -18,20 +19,43 @@
     <textarea id="issue" name="issue" maxlength="200" rows="3" placeholder="例：会議での発言が少ない"></textarea>
     <label for="effort">課題解決にむけて取り組んでいること（任意・200文字まで）</label>
     <textarea id="effort" name="effort" maxlength="200" rows="3" placeholder="例：毎回の会議で1回は意見を言う"></textarea>
-    <p class="note">入力した内容は、変更するまで保存されます。座席配置図で名前を押すと、ほかの人も見られます。</p>
+    <label id="costume-label">分身のコスチューム（バーチャルオフィスで着る服）</label>
+    <div class="costume-picker">
+      <div id="costume-preview" class="costume-preview" aria-hidden="true"></div>
+      <div id="costumes" class="costume-list" role="radiogroup" aria-labelledby="costume-label"></div>
+    </div>
+    <p class="note">入力した内容は、変更するまで保存されます。座席配置図で名前を押すと、ほかの人も見られます。コスチュームは、全員のバーチャルオフィスに反映されます。</p>
     <p id="msg" class="msg error"></p>
     <button type="submit" class="btn-block">決定</button>
   </form>
 </main>
 <script src="/static/app.js"></script>
-<script>
+<script type="module">
+  import { COSTUMES, costumeOf, buildAvatar } from '/static/office-avatar.js';
   const msg = document.getElementById('msg');
+  const list = document.getElementById('costumes');
+
+  // コスチュームの選択肢（押すと、左の見本が着替える）
+  for (const c of COSTUMES) {
+    const option = el('label', 'costume-option');
+    const input = document.createElement('input');
+    Object.assign(input, { type: 'radio', name: 'costume', value: c.id });
+    const text = el('span', null, c.name);
+    text.append(el('small', null, c.note));
+    option.append(input, text);
+    list.append(option);
+  }
+  const preview = createPreview(document.getElementById('costume-preview'));
+  list.addEventListener('change', (e) => preview.then((p) => p.dress(e.target.value)));
 
   api('/me').then((me) => {
     document.getElementById('name').value = me.name;
     document.getElementById('issue').value = me.issue ?? '';
     document.getElementById('effort').value = me.effort ?? '';
     document.getElementById('topic').textContent = me.topic ?? 'お題なし';
+    const costume = costumeOf(me.costume);
+    list.querySelector(`input[value="${costume}"]`).checked = true;
+    preview.then((p) => p.dress(costume));
   }).catch(fail(msg));
 
   document.getElementById('form').addEventListener('submit', async (e) => {
@@ -42,6 +66,49 @@
       location.href = r.redirect;
     } catch (err) { fail(msg)(err); }
   });
+
+  /** 見本：選んだコスチュームの分身を、ゆっくり回して見せる（3D が使えない時は、見本なしで選べる） */
+  async function createPreview(box) {
+    try {
+      const THREE = await import('three');
+      const w = box.clientWidth, h = box.clientHeight;
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+      renderer.setSize(w, h);
+      box.append(renderer.domElement);
+      const scene = new THREE.Scene();
+      scene.add(new THREE.HemisphereLight(0xffffff, 0xd8cfc4, 1.6));
+      const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+      sun.position.set(1.5, 3, 2.5);
+      scene.add(sun);
+      const camera = new THREE.PerspectiveCamera(30, w / h, 0.1, 20);
+      camera.position.set(0, 1.35, 5.6);                    // 足元からコック帽の上まで（高さ約2.2m）が入るように
+      camera.lookAt(0, 1.08, 0);
+      const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      let figure = null;
+      const t0 = performance.now();
+      renderer.setAnimationLoop((now) => {
+        if (figure) figure.root.rotation.y = still ? 0.5 : 0.5 + Math.sin((now - t0) / 1600) * 0.9;
+        renderer.render(scene, camera);
+      });
+      return {
+        dress(costume) {
+          if (figure) {
+            scene.remove(figure.root);
+            figure.root.traverse((o) => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
+          }
+          figure = buildAvatar(THREE, 1, costumeOf(costume));
+          figure.pelvis.position.y = 0.93;                     // 立った時の腰の高さ
+          figure.armL.rotation.z = -0.12; figure.armR.rotation.z = 0.12;
+          scene.add(figure.root);
+        },
+      };
+    } catch (e) {
+      console.error(e);
+      box.hidden = true;
+      return { dress() {} };
+    }
+  }
 </script>
 </body>
 </html>
